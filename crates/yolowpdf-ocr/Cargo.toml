@@ -8,10 +8,10 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-yolowpdf-gpu = { path = "../yolowpdf-gpu" }
-yolowpdf-infer = { path = "../yolowpdf-infer" }
+yolowpdf-gpu = { version = "0.1.0", path = "../yolowpdf-gpu" }
+yolowpdf-infer = { version = "0.1.0", path = "../yolowpdf-infer" }
 # 适配 PDF 的扫描页接口（yolowpdf 本身不依赖模型）
-yolowpdf = { path = "../yolowpdf" }
-yolowpdf-stat = { path = "../yolowpdf-stat" }
+yolowpdf = { version = "0.1.0", path = "../yolowpdf" }
+yolowpdf-stat = { version = "0.1.0", path = "../yolowpdf-stat" }
 sha2 = "0.11.1"
 serde_json = "1.0.154"
