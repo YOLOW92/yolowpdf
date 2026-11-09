@@ -34,14 +34,14 @@ PageSift 是一个抓取和正文抽取引擎。它的 PDF 分支一开始只有
 
 ## 安装
 
-还没发布到 crates.io，直接用 Git：
+已发布到 crates.io：
 
 ```toml
 [dependencies]
-yolowpdf = { git = "https://github.com/YOLOW92/yolowpdf" }
+yolowpdf = "0.1"
 
 # 可选 OCR：
-yolowpdf-ocr = { git = "https://github.com/YOLOW92/yolowpdf" }
+yolowpdf-ocr = "0.1"
 ```
 
 ## 用法
