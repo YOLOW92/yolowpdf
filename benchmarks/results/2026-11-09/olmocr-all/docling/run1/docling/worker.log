@@ -1,0 +1,9 @@
+Loading weights:   0%|          | 0/770 [00:00<?, ?it/s]Loading weights: 100%|██████████| 770/770 [00:00<00:00, 12213.68it/s]
+Loading weights:   0%|          | 0/770 [00:00<?, ?it/s]Loading weights: 100%|██████████| 770/770 [00:00<00:00, 12105.54it/s]
+/home/yolow92/yolowpdf-bench/py/docling-gpu/lib/python3.12/site-packages/torch/nn/modules/conv.py:560: UserWarning: Using padding='same' with even kernel lengths and odd dilation may require a zero-padded copy of the input be created (Triggered internally at /__w/pytorch/pytorch/aten/src/ATen/native/Convolution.cpp:1104.)
+  return F.conv2d(
+/home/yolow92/yolowpdf-bench/py/docling-gpu/lib/python3.12/site-packages/torch/nn/modules/conv.py:560: UserWarning: Using padding='same' with even kernel lengths and odd dilation may require a zero-padded copy of the input be created (Triggered internally at /__w/pytorch/pytorch/aten/src/ATen/native/Convolution.cpp:1104.)
+  return F.conv2d(
+[33m[WARNING] 2026-11-09 22:44:58,556 [RapidOCR] main.py:164: The text detection result is empty[0m
+RapidOCR returned empty result!
+Skipping page separator extraction on page 1: 7288 separator candidates exceed the limit of 5000. Such dense vector geometry cannot yield trustworthy page separators; reading order falls back to the pre-separator behavior.

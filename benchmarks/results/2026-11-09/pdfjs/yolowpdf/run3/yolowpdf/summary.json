@@ -1,0 +1,45 @@
+{
+ "tool": "yolowpdf",
+ "versions": [
+  "0.1.0"
+ ],
+ "items": 1089,
+ "workers_asked": 16,
+ "peak_live_workers": 16,
+ "wall_s": 0.49,
+ "completed": 830,
+ "completion": 0.762167,
+ "goodput": 1694.073,
+ "status": {
+  "ok": 830,
+  "empty": 242,
+  "error": 17
+ },
+ "startup_ms": [
+  67.8,
+  72.1,
+  65.3,
+  71.4,
+  70.1,
+  76.9,
+  71.3,
+  73.6,
+  69.8,
+  74.4,
+  77.8,
+  73.4,
+  77.3,
+  76.9,
+  76.0,
+  70.3
+ ],
+ "max_peak_mb": 103.3,
+ "cap_s": 0.0,
+ "cap_reached": false,
+ "timeout_s": 600.0,
+ "mem_max_mb": 4096,
+ "sample_us": 1000,
+ "cgroup": true,
+ "mem_low": false,
+ "per_worker_mb": 200
+}

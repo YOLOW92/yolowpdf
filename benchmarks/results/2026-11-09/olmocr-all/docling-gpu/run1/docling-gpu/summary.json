@@ -1,0 +1,30 @@
+{
+ "tool": "docling-gpu",
+ "versions": [
+  "2.142.1"
+ ],
+ "items": 1269,
+ "workers_asked": 2,
+ "peak_live_workers": 2,
+ "wall_s": 185.15,
+ "completed": 589,
+ "completion": 0.464145,
+ "goodput": 3.181,
+ "status": {
+  "ok": 589,
+  "capped": 680
+ },
+ "startup_ms": [
+  3750.1,
+  3853.0
+ ],
+ "max_peak_mb": 2323.1,
+ "cap_s": 184.933,
+ "cap_reached": true,
+ "timeout_s": 1800.0,
+ "mem_max_mb": 4096,
+ "sample_us": 10000,
+ "cgroup": true,
+ "mem_low": false,
+ "per_worker_mb": 3200
+}

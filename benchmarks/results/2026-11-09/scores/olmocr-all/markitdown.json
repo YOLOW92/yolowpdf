@@ -1,0 +1,14 @@
+{
+ "tests": 7295,
+ "passed": 2178,
+ "categories": {
+  "arxiv_math": 0.0,
+  "baseline": 0.9484126984126984,
+  "headers_footers": 0.3881578947368421,
+  "long_tiny_text": 0.31221719457013575,
+  "multi_column": 0.3925339366515837,
+  "table_tests": 0.19863013698630136
+ },
+ "olmocr": 0.3733253102262602,
+ "nobase": 0.2583078325889726
+}

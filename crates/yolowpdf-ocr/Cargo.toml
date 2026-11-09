@@ -1,0 +1,17 @@
+[package]
+description = "Pure-Rust OCR for scanned PDF pages: PP-OCRv6 text detection and recognition, on CPU or an NVIDIA GPU."
+name = "yolowpdf-ocr"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+yolowpdf-gpu = { path = "../yolowpdf-gpu" }
+yolowpdf-infer = { path = "../yolowpdf-infer" }
+# 适配 PDF 的扫描页接口（yolowpdf 本身不依赖模型）
+yolowpdf = { path = "../yolowpdf" }
+yolowpdf-stat = { path = "../yolowpdf-stat" }
+sha2 = "0.11.1"
+serde_json = "1.0.154"

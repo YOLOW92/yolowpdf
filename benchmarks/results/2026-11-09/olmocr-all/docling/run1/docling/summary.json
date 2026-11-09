@@ -1,0 +1,30 @@
+{
+ "tool": "docling",
+ "versions": [
+  "2.142.1"
+ ],
+ "items": 1269,
+ "workers_asked": 16,
+ "peak_live_workers": 2,
+ "wall_s": 185.84,
+ "completed": 89,
+ "completion": 0.070134,
+ "goodput": 0.479,
+ "status": {
+  "ok": 89,
+  "capped": 1180
+ },
+ "startup_ms": [
+  3306.7,
+  3484.2
+ ],
+ "max_peak_mb": 2745.23,
+ "cap_s": 184.933,
+ "cap_reached": true,
+ "timeout_s": 1800.0,
+ "mem_max_mb": 4096,
+ "sample_us": 10000,
+ "cgroup": true,
+ "mem_low": false,
+ "per_worker_mb": 3200
+}

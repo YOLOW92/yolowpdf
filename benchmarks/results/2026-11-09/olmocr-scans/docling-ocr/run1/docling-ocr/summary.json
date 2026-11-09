@@ -1,0 +1,30 @@
+{
+ "tool": "docling-ocr",
+ "versions": [
+  "2.142.1"
+ ],
+ "items": 134,
+ "workers_asked": 16,
+ "peak_live_workers": 2,
+ "wall_s": 155.749,
+ "completed": 14,
+ "completion": 0.104478,
+ "goodput": 0.09,
+ "status": {
+  "ok": 14,
+  "capped": 120
+ },
+ "startup_ms": [
+  3354.5,
+  3449.5
+ ],
+ "max_peak_mb": 2542.8,
+ "cap_s": 154.847,
+ "cap_reached": true,
+ "timeout_s": 1800.0,
+ "mem_max_mb": 4096,
+ "sample_us": 10000,
+ "cgroup": true,
+ "mem_low": false,
+ "per_worker_mb": 3200
+}

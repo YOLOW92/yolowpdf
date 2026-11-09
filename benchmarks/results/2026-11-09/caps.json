@@ -1,0 +1,12 @@
+{
+ "olmocr-all": {
+  "raw_max_s": 184.933,
+  "cap_s": 184.933,
+  "set_by": "pymupdf4llm"
+ },
+ "olmocr-scans": {
+  "raw_max_s": 154.847,
+  "cap_s": 154.847,
+  "set_by": "yolowpdf-ocr"
+ }
+}

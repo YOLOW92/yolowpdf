@@ -1,0 +1,27 @@
+//! stable 模糊测试（`yolowpdf-fuzz pdf`，见 scripts/fuzz.sh）找到的用例，最小化后放在这里。
+
+use std::time::Duration;
+
+use yolowpdf::{Options, fuzzing};
+
+fn quick(data: &[u8]) -> Duration {
+    let opts = Options {
+        timeout: Some(Duration::from_secs(10)),
+        ..Options::default()
+    };
+    // 本线程的 CPU 时间：机器忙时墙钟会翻倍，要抓的是退化成平方级
+    yolowpdf_testkit::cpu_time(|| fuzzing::extract_unguarded(data, &opts)).1
+}
+
+/// 修复扫描里每个没有 endstream 的 `stream` 关键字都从当前位置找到文件末尾：
+/// 63 万字节、大量 `stream\n` 的输入曾经要 20 秒（而且不受 `timeout` 约束）。
+#[test]
+fn many_streams_without_endstream() {
+    let mut data = b"%PDF-1.4\n1 0 obj\n<< /Length 5 >>\n".to_vec();
+    data.extend(b"stream\n".repeat(100_000));
+    let took = quick(&data);
+    assert!(
+        took < Duration::from_secs(if cfg!(debug_assertions) { 10 } else { 2 }),
+        "{took:?}"
+    );
+}

@@ -1,0 +1,22 @@
+Loading weights:   0%|          | 0/770 [00:00<?, ?it/s]Loading weights:   0%|          | 0/770 [00:00<?, ?it/s]Loading weights: 100%|██████████| 770/770 [00:00<00:00, 11756.79it/s]
+Loading weights: 100%|██████████| 770/770 [00:00<00:00, 11206.70it/s]
+/home/yolow92/yolowpdf-bench/py/docling-gpu/lib/python3.12/site-packages/torch/nn/modules/conv.py:560: UserWarning: Using padding='same' with even kernel lengths and odd dilation may require a zero-padded copy of the input be created (Triggered internally at /__w/pytorch/pytorch/aten/src/ATen/native/Convolution.cpp:1104.)
+  return F.conv2d(
+/home/yolow92/yolowpdf-bench/py/docling-gpu/lib/python3.12/site-packages/torch/nn/modules/conv.py:560: UserWarning: Using padding='same' with even kernel lengths and odd dilation may require a zero-padded copy of the input be created (Triggered internally at /__w/pytorch/pytorch/aten/src/ATen/native/Convolution.cpp:1104.)
+  return F.conv2d(
+[33m[WARNING] 2026-11-09 23:00:41,310 [RapidOCR] main.py:164: The text detection result is empty[0m
+RapidOCR returned empty result!
+[33m[WARNING] 2026-11-09 23:01:17,599 [RapidOCR] main.py:164: The text detection result is empty[0m
+RapidOCR returned empty result!
+[33m[WARNING] 2026-11-09 23:01:41,209 [RapidOCR] main.py:164: The text detection result is empty[0m
+RapidOCR returned empty result!
+[33m[WARNING] 2026-11-09 23:01:46,248 [RapidOCR] main.py:164: The text detection result is empty[0m
+RapidOCR returned empty result!
+[33m[WARNING] 2026-11-09 23:01:57,275 [RapidOCR] main.py:164: The text detection result is empty[0m
+RapidOCR returned empty result!
+[33m[WARNING] 2026-11-09 23:02:17,120 [RapidOCR] main.py:164: The text detection result is empty[0m
+RapidOCR returned empty result!
+[33m[WARNING] 2026-11-09 23:02:40,799 [RapidOCR] main.py:164: The text detection result is empty[0m
+RapidOCR returned empty result!
+[33m[WARNING] 2026-11-09 23:02:42,569 [RapidOCR] main.py:164: The text detection result is empty[0m
+RapidOCR returned empty result!

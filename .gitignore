@@ -1,0 +1,11 @@
+/target/
+/crates/yolowpdf/fuzz/target/
+/benchmarks/**/target/
+/benchmarks/results/**/logs/
+/benchmarks/results/**/timeline.csv.gz
+/benchmarks/data/
+/benchmarks/results/**/run*/**/*.md
+/benchmarks/results/**/olmocr-all/**/**.md
+/benchmarks/results/**/olmocr-scans/**/**.md
+/benchmarks/results/**/pdfjs/**/**.md
+/benchmarks/__pycache__/

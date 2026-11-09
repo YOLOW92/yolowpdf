@@ -1,0 +1,44 @@
+{
+ "tool": "tesseract",
+ "versions": [
+  "tesseract 5.5.0"
+ ],
+ "items": 134,
+ "workers_asked": 16,
+ "peak_live_workers": 13,
+ "wall_s": 122.142,
+ "completed": 20,
+ "completion": 0.149254,
+ "goodput": 0.164,
+ "status": {
+  "ok": 20,
+  "empty": 16,
+  "crash": 8,
+  "stopped": 90
+ },
+ "startup_ms": [
+  186.2,
+  181.9,
+  186.6,
+  181.2,
+  180.4,
+  185.0,
+  186.0,
+  197.9,
+  191.9,
+  200.0,
+  194.2,
+  204.4,
+  203.4
+ ],
+ "max_peak_mb": 1525.15,
+ "cap_s": 0.0,
+ "cap_reached": false,
+ "timeout_s": 300.0,
+ "mem_max_mb": 4096,
+ "sample_us": 1000,
+ "cgroup": true,
+ "mem_low": false,
+ "per_worker_mb": 700,
+ "excluded": "interrupted: external tesseract pipeline too slow"
+}

@@ -1,0 +1,33 @@
+{
+ "tool": "markitdown",
+ "versions": [
+  "0.1.9"
+ ],
+ "items": 1269,
+ "workers_asked": 16,
+ "peak_live_workers": 4,
+ "wall_s": 88.469,
+ "completed": 1204,
+ "completion": 0.948779,
+ "goodput": 13.609,
+ "status": {
+  "ok": 1204,
+  "empty": 58,
+  "error": 7
+ },
+ "startup_ms": [
+  799.5,
+  805.3,
+  815.3,
+  834.9
+ ],
+ "max_peak_mb": 1171.47,
+ "cap_s": 0.0,
+ "cap_reached": false,
+ "timeout_s": 600.0,
+ "mem_max_mb": 4096,
+ "sample_us": 1000,
+ "cgroup": true,
+ "mem_low": false,
+ "per_worker_mb": 1800
+}
