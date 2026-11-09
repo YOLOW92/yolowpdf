@@ -1,6 +1,6 @@
 # Benchmarks
 
-Public benchmarks, 16 workers on every run, official scoring code.
+Exploratory runs on public benchmark datasets. Actual concurrency and measurement limits are described in the results report.
 
 ## Data
 
@@ -14,18 +14,18 @@ Data is not redistributed. `benchmarks/datasets.py` builds the manifests; `hashe
 records every input file. Default data root: `/home/yolow92/yolowpdf-data`, override with
 `YOLOWPDF_DATA`.
 
-The PDF score is the official olmOCR-bench score: the mean of per-jsonl pass rates,
-including the baseline category added by the official code. We call the official
-`olmocr.bench.tests` `run()` for every test; missing output is a failed test. The
-scanner is sharded only to use more cores. There is no custom quality metric in the
-main tables.
+The scorer invokes olmOCR tests, treating missing output as failure. Some results
+use `YOLOWPDF_FAST_MATH=1`, an unverified math prefilter, so equivalence to the
+unmodified official scorer is not established. Scores mix completion and quality.
+A nonempty result can include placeholder text; it does not prove useful extraction.
+Common-completed-item quality scoring was not completed for the published run.
 
 ## Concurrency
 
-Every conversion run uses exactly **16 worker processes**. There are no 1/2/4/8/32
-runs and no single-thread numbers. A worker handles one PDF at a time. Each worker is
-placed in a systemd user scope with `MemoryMax` and `MemorySwapMax=0`; actual live
-workers are reported when memory or VRAM admits fewer than 16.
+The main runs targeted 16 workers; memory and VRAM admission often reduced actual
+live workers. The separately recorded formula run requested two workers. Each worker
+handles one PDF at a time and is placed in a systemd user scope. See the report
+and `summary.json` for actual peak live workers.
 
 ## Time cap for Docling
 
@@ -36,11 +36,10 @@ T_raw = longest wall time of a light-tool run with completion >= 90%
 T_max = max(60 s, T_raw)
 ```
 
-Docling (CPU and GPU) then runs, in that order, with `--cap-s T_max`. MinerU is excluded from this round by the repository owner.
+Docling (CPU and GPU) then runs, in that order, with `--cap-s T_max`.
 When the cap is reached the whole worker set is stopped; in-flight and unstarted
-items are `capped`/`not_reached` and count as not completed. Official scores treat
-them as zero. A second score is reported on the items every tool completed, so
-quality and speed stay separable.
+items are `capped`/`not_reached` and count as not completed. The scorer treats missing output as failed tests. No completed common-items
+quality comparison is available for this run.
 
 The cap is per dataset. `caps.json` records `raw_max_s`, `cap_s`, and the tool that
 set it. The 60 s floor exists so that a 2-second light-tool run does not leave
@@ -74,7 +73,7 @@ flock ~/pagesift/tasks/0.80/bench.lock \
 # Official scores
 python3 -I benchmarks/score_tool.py --data benchmarks/data/olmocr-b1 \
   --candidate benchmarks/results/<date>/olmocr-all/yolowpdf/run1/yolowpdf \
-  --out benchmarks/results/<date>/scores/olmocr-all/yolowpdf.json --shards 8
+  --out benchmarks/results/<date>/scores/olmocr-all/yolowpdf.json --shards 1
 ```
 
 `run_suite.py` writes `results/<date>/<dataset>/<tool>/run<N>/` with

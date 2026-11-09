@@ -11,7 +11,6 @@ Machine: Intel Core i7-10700 (8 cores / 16 threads), 15 GB RAM, NVIDIA GTX 1070
 | pypdf | 6.21.2 | same | `PdfReader` + `extract_text` |
 | MarkItDown | 0.1.9 | same | `MarkItDown().convert(path).text_content` |
 | Docling | 2.142.1 | `~/yolowpdf-bench/py/docling-gpu` | torch 2.14.1+cu126; CPU mode and GPU mode |
-| MinerU | 4.0.12 | not scored | removed from this round by the repository owner |
 | Tesseract | 5.5.0 | extracted Ubuntu .deb under `~/yolowpdf-bench/tesseract` | installed without root; external pdftoppm pipeline was too slow, excluded from the tables |
 | PaddleOCR | pending | `~/yolowpdf-bench/py/paddleocr` | CPU wheel; not the same model revision as PP-OCRv6 |
 

@@ -26,8 +26,8 @@ the projects below. No source code from them is included unless stated.
 
 ## Models (downloaded, not redistributed)
 
-The OCR crate downloads these model files from Hugging Face on first use and
-verifies their size and SHA-256. They are not part of this repository.
+Model files are not part of this repository. The caller supplies model directories
+or a download callback; model metadata includes sizes and SHA-256 checksums.
 
 - PaddlePaddle **PP-OCRv6** detection and recognition models, Apache-2.0.
 - PaddlePaddle **PP-DocLayoutV3** layout model, Apache-2.0.
