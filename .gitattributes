@@ -1,0 +1,3 @@
+# PTX sources are embedded verbatim via include_str! and fed to the CUDA
+# driver's JIT; they must never be checked out with CRLF line endings.
+*.ptx text eol=lf
