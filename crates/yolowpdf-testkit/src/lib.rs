@@ -115,12 +115,24 @@ mod tests {
     #[test]
     fn sleeping_uses_no_cpu_and_spinning_does() {
         let (_, slept) = cpu_time(|| std::thread::sleep(Duration::from_millis(200)));
-        // 固定的工作量，不按墙钟转圈：机器忙时线程被抢走，按墙钟转 100 ms 用到的 CPU 可能不到一半
+        // 转到 CPU 时钟说够了为止：不按墙钟（机器忙时线程被抢走，转满墙钟也用不到
+        // 那么多 CPU），也不按固定圈数（Windows 的线程 CPU 时钟按约 15.6 ms 的节拍
+        // 记账，两千万圈在这把尺子下会读成 0）。圈数另设上限，时钟真坏了就让下面的
+        // 断言失败，不无限转。
         let (_, spun) = cpu_time(|| {
+            let start = thread_cpu_time();
             let mut x = 0u64;
-            for i in 0..20_000_000u64 {
-                x = std::hint::black_box(x.wrapping_add(i));
+            let mut i = 0u64;
+            while thread_cpu_time().saturating_sub(start) < Duration::from_millis(200) {
+                for _ in 0..100_000 {
+                    x = std::hint::black_box(x.wrapping_add(i));
+                    i += 1;
+                }
+                if i >= 4_000_000_000 {
+                    break;
+                }
             }
+            x
         });
         if cfg!(any(unix, windows)) {
             assert!(slept < Duration::from_millis(50), "{slept:?}");
