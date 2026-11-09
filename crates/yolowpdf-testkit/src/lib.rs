@@ -49,7 +49,54 @@ mod imp {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+mod imp {
+    use std::time::Duration;
+
+    // libc 不提供 Win32 线程计时 API，这里直接声明 kernel32 的两个函数；
+    // FILETIME 是 64 位的 100 纳秒计数，拆成两个 u32 字段。
+    #[repr(C)]
+    struct FileTime {
+        low: u32,
+        high: u32,
+    }
+
+    unsafe extern "system" {
+        fn GetCurrentThread() -> *mut std::ffi::c_void;
+        fn GetThreadTimes(
+            thread: *mut std::ffi::c_void,
+            creation: *mut FileTime,
+            exit: *mut FileTime,
+            kernel: *mut FileTime,
+            user: *mut FileTime,
+        ) -> i32;
+    }
+
+    pub fn thread_cpu_time() -> Duration {
+        fn ticks(ft: &FileTime) -> u64 {
+            ((ft.high as u64) << 32) | ft.low as u64
+        }
+        let zero = || FileTime { low: 0, high: 0 };
+        let mut creation = zero();
+        let mut exit = zero();
+        let mut kernel = zero();
+        let mut user = zero();
+        // SAFETY: GetCurrentThread 返回的伪句柄不需要关闭；四个 FileTime 指针都有效可写。
+        let ok = unsafe {
+            GetThreadTimes(
+                GetCurrentThread(),
+                &mut creation,
+                &mut exit,
+                &mut kernel,
+                &mut user,
+            )
+        };
+        assert_ne!(ok, 0, "GetThreadTimes failed");
+        Duration::from_nanos((ticks(&kernel) + ticks(&user)) * 100)
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 mod imp {
     use std::sync::OnceLock;
     use std::time::{Duration, Instant};
@@ -75,7 +122,7 @@ mod tests {
                 x = std::hint::black_box(x.wrapping_add(i));
             }
         });
-        if cfg!(unix) {
+        if cfg!(any(unix, windows)) {
             assert!(slept < Duration::from_millis(50), "{slept:?}");
         }
         assert!(
@@ -97,7 +144,7 @@ mod tests {
             .join()
             .unwrap();
         });
-        if cfg!(unix) {
+        if cfg!(any(unix, windows)) {
             assert!(own < Duration::from_millis(50), "{own:?}");
         }
     }
