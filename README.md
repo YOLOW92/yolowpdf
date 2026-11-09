@@ -39,14 +39,14 @@ parse nor nonempty output guarantees that a difficult page was understood.
 
 ## Install
 
-The workspace is not published to crates.io yet. Use the Git repository:
+Published on crates.io:
 
 ```toml
 [dependencies]
-yolowpdf = { git = "https://github.com/YOLOW92/yolowpdf" }
+yolowpdf = "0.1"
 
 # Optional OCR:
-yolowpdf-ocr = { git = "https://github.com/YOLOW92/yolowpdf" }
+yolowpdf-ocr = "0.1"
 ```
 
 ## Usage
