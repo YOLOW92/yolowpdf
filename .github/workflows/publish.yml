@@ -1,0 +1,59 @@
+name: Publish
+
+# 推 v* 标签时把 yolowpdf 核心 crate 发到 crates.io。
+# 这次只发代码有变化的核心 crate：OCR、GPU、统计等 crate 保持各自已经发布的版本，
+# 不在这个流程里跟着重发（workspace 版本号变了，但它们的依赖范围仍然覆盖新核心）。
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v* tag to publish from
+        required: true
+        type: string
+      dry_run:
+        description: Package and verify without uploading
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check tag and version
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml","rb"))["workspace"]["package"]["version"])')
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="$INPUT_TAG"
+          fi
+          [[ "$tag" == "v$version" ]] || {
+            echo "tag $tag does not match workspace version $version" >&2
+            exit 1
+          }
+          if [[ "$GITHUB_REF" != refs/tags/* ]]; then
+            git ls-remote --tags origin "refs/tags/$tag" | grep -q . || {
+              echo "tag $tag does not exist" >&2
+              exit 1
+            }
+          fi
+      - name: Package
+        run: cargo publish -p yolowpdf --locked --dry-run
+      - name: Publish
+        if: github.event_name == 'push' || inputs.dry_run == false
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p yolowpdf --locked
