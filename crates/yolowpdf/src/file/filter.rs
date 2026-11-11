@@ -31,14 +31,16 @@ pub(crate) fn decode(
     for &(name, params) in filters {
         let input = buf.as_deref().unwrap_or(raw);
         let out = match name {
-            b"FlateDecode" | b"Fl" => predict(inflate(input, limit)?, params)?,
-            b"LZWDecode" | b"LZW" => predict(lzw(input, early_change(params), limit)?, params)?,
+            b"FlateDecode" | b"Fl" => predict(inflate(input, limit)?, params, limit)?,
+            b"LZWDecode" | b"LZW" => {
+                predict(lzw(input, early_change(params), limit)?, params, limit)?
+            }
             b"ASCII85Decode" | b"A85" => ascii85(input, limit)?,
             b"ASCIIHexDecode" | b"AHx" => ascii_hex(input, limit)?,
             b"RunLengthDecode" | b"RL" => run_length(input, limit)?,
             b"BrotliDecode" => brotli(input, limit)?,
             // Crypt 过滤器只在 Identity（不另加密）时会走到这里；真正的解密在取数据时已经做了
-            b"Crypt" => input.to_vec(),
+            b"Crypt" => crypt(input, limit)?,
             _ => return Err(DecodeError::Unsupported),
         };
         if out.len() > limit {
@@ -225,7 +227,8 @@ fn expand(mut code: usize, prefix: &[u16], suffix: &[u8], out: &mut Vec<u8>) {
 }
 
 fn ascii85(input: &[u8], limit: usize) -> Result<Vec<u8>, DecodeError> {
-    let mut out = Vec::with_capacity(input.len() * 4 / 5 + 4);
+    let cap = input.len().saturating_mul(4) / 5 + 4;
+    let mut out = Vec::with_capacity(cap.min(limit.saturating_add(4)));
     let mut group = [0u8; 5];
     let mut n = 0;
     let input = match input.windows(2).position(|w| w == b"~>") {
@@ -233,11 +236,11 @@ fn ascii85(input: &[u8], limit: usize) -> Result<Vec<u8>, DecodeError> {
         None => input,
     };
     for &c in input {
-        if out.len() > limit {
-            return Err(DecodeError::TooLarge);
-        }
         match c {
-            b'z' if n == 0 => out.extend_from_slice(&[0; 4]),
+            b'z' if n == 0 => {
+                room(out.len(), 4, limit)?;
+                out.extend_from_slice(&[0; 4]);
+            }
             b'!'..=b'u' => {
                 group[n] = c - b'!';
                 n += 1;
@@ -250,6 +253,7 @@ fn ascii85(input: &[u8], limit: usize) -> Result<Vec<u8>, DecodeError> {
                             Ok(out)
                         };
                     }
+                    room(out.len(), 4, limit)?;
                     out.extend_from_slice(&(v as u32).to_be_bytes());
                     n = 0;
                 }
@@ -265,14 +269,29 @@ fn ascii85(input: &[u8], limit: usize) -> Result<Vec<u8>, DecodeError> {
         }
         let v = group.iter().fold(0u64, |v, &d| v * 85 + u64::from(d));
         if v <= u64::from(u32::MAX) {
+            room(out.len(), n - 1, limit)?;
             out.extend_from_slice(&(v as u32).to_be_bytes()[..n - 1]);
         }
     }
     Ok(out)
 }
 
+/// 输出上限检查：加 `add` 字节后仍不超过 `limit` 才允许写入。
+fn room(out: usize, add: usize, limit: usize) -> Result<(), DecodeError> {
+    match out.checked_add(add) {
+        Some(n) if n <= limit => Ok(()),
+        _ => Err(DecodeError::TooLarge),
+    }
+}
+
 fn ascii_hex(input: &[u8], limit: usize) -> Result<Vec<u8>, DecodeError> {
-    let mut out = Vec::with_capacity(input.len() / 2 + 1);
+    let mut out = Vec::with_capacity(
+        input
+            .len()
+            .saturating_div(2)
+            .saturating_add(1)
+            .min(limit.saturating_add(1)),
+    );
     let mut high: Option<u8> = None;
     for &c in input {
         if c == b'>' {
@@ -287,43 +306,53 @@ fn ascii_hex(input: &[u8], limit: usize) -> Result<Vec<u8>, DecodeError> {
             _ => break,
         };
         match high.take() {
-            Some(h) => out.push(h << 4 | v),
+            Some(h) => {
+                room(out.len(), 1, limit)?;
+                out.push(h << 4 | v);
+            }
             None => high = Some(v),
-        }
-        if out.len() > limit {
-            return Err(DecodeError::TooLarge);
         }
     }
     if let Some(h) = high {
+        room(out.len(), 1, limit)?;
         out.push(h << 4);
     }
     Ok(out)
 }
 
 fn run_length(input: &[u8], limit: usize) -> Result<Vec<u8>, DecodeError> {
-    let mut out = Vec::with_capacity(input.len());
+    let mut out = Vec::with_capacity(input.len().min(limit.saturating_add(1)));
     let mut i = 0;
     while i < input.len() {
-        if out.len() > limit {
-            return Err(DecodeError::TooLarge);
-        }
         let n = input[i];
         i += 1;
         match n {
             128 => break,
             0..=127 => {
                 let end = (i + usize::from(n) + 1).min(input.len());
+                let len = end - i;
+                room(out.len(), len, limit)?;
                 out.extend_from_slice(&input[i..end]);
                 i = end;
             }
             _ => {
                 let Some(&b) = input.get(i) else { break };
-                out.resize(out.len() + 257 - usize::from(n), b);
+                let len = 257 - usize::from(n);
+                room(out.len(), len, limit)?;
+                out.resize(out.len() + len, b);
                 i += 1;
             }
         }
     }
     Ok(out)
+}
+
+/// Crypt（Identity）：原样返回，但复制之前先确认输入没有超出上限。
+fn crypt(input: &[u8], limit: usize) -> Result<Vec<u8>, DecodeError> {
+    if input.len() > limit {
+        return Err(DecodeError::TooLarge);
+    }
+    Ok(input.to_vec())
 }
 
 fn brotli(input: &[u8], limit: usize) -> Result<Vec<u8>, DecodeError> {
@@ -338,7 +367,11 @@ fn brotli(input: &[u8], limit: usize) -> Result<Vec<u8>, DecodeError> {
 }
 
 /// 预测器（Flate/LZW 的 DecodeParms）：2 = TIFF 横向差分，10–15 = PNG 逐行过滤。
-fn predict(data: Vec<u8>, params: Option<&Dictionary>) -> Result<Vec<u8>, DecodeError> {
+fn predict(
+    data: Vec<u8>,
+    params: Option<&Dictionary>,
+    limit: usize,
+) -> Result<Vec<u8>, DecodeError> {
     let predictor = int_param(params, b"Predictor", 1);
     if predictor != 2 && !(10..=15).contains(&predictor) {
         return Ok(data);
@@ -347,22 +380,28 @@ fn predict(data: Vec<u8>, params: Option<&Dictionary>) -> Result<Vec<u8>, Decode
     let columns = positive(b"Columns", 1);
     let colors = positive(b"Colors", 1);
     let bits = positive(b"BitsPerComponent", 8);
+    let color_bits = colors.checked_mul(bits).ok_or(DecodeError::Corrupt)?;
     let row = columns
-        .checked_mul(colors)
-        .and_then(|v| v.checked_mul(bits))
+        .checked_mul(color_bits)
         .ok_or(DecodeError::Corrupt)?
         .div_ceil(8);
     if predictor == 2 {
-        return Ok(tiff(data, row, colors, bits));
+        return tiff(data, row, colors, bits, limit);
     }
-    Ok(png(&data, row, (colors * bits).div_ceil(8)))
+    png(&data, row, color_bits.div_ceil(8), limit)
 }
 
-fn png(data: &[u8], row: usize, bpp: usize) -> Vec<u8> {
+fn png(data: &[u8], row: usize, bpp: usize, limit: usize) -> Result<Vec<u8>, DecodeError> {
+    // 两行工作缓冲与输出共用同一份解码预算：不可信元数据不能驱动越预算的分配。
+    let work = row.checked_mul(2).ok_or(DecodeError::Corrupt)?;
+    if work > limit {
+        return Err(DecodeError::TooLarge);
+    }
+    let stride = row.checked_add(1).ok_or(DecodeError::Corrupt)?;
     let mut out = Vec::with_capacity(data.len());
     let mut prev = vec![0u8; row];
     let mut cur = vec![0u8; row];
-    for chunk in data.chunks(row + 1) {
+    for chunk in data.chunks(stride) {
         let kind = chunk[0];
         let body = &chunk[1..];
         let len = body.len();
@@ -402,7 +441,7 @@ fn png(data: &[u8], row: usize, bpp: usize) -> Vec<u8> {
         out.extend_from_slice(&cur[..len]);
         std::mem::swap(&mut prev, &mut cur);
     }
-    out
+    Ok(out)
 }
 
 fn paeth(a: u8, b: u8, c: u8) -> u8 {
@@ -422,7 +461,20 @@ fn paeth(a: u8, b: u8, c: u8) -> u8 {
 }
 
 /// TIFF 预测器 2：每个分量是同一行里前一个同色分量加上差值（模 2^bits）。
-fn tiff(mut data: Vec<u8>, row: usize, colors: usize, bits: usize) -> Vec<u8> {
+fn tiff(
+    mut data: Vec<u8>,
+    row: usize,
+    colors: usize,
+    bits: usize,
+    limit: usize,
+) -> Result<Vec<u8>, DecodeError> {
+    // 1/2/4 位分支按 Colors 建 u16 累加表；表也从同一份预算里出。
+    if matches!(bits, 1 | 2 | 4) {
+        let table = colors.checked_mul(2).ok_or(DecodeError::Corrupt)?;
+        if table > limit {
+            return Err(DecodeError::TooLarge);
+        }
+    }
     for line in data.chunks_mut(row) {
         match bits {
             8 => {
@@ -456,7 +508,7 @@ fn tiff(mut data: Vec<u8>, row: usize, colors: usize, bits: usize) -> Vec<u8> {
             _ => break,
         }
     }
-    data
+    Ok(data)
 }
 
 #[cfg(test)]
@@ -585,7 +637,7 @@ mod tests {
     fn png_up_predictor() {
         // 两行、每行 3 字节：第二行用 Up
         let data = [0, 1, 2, 3, 2, 1, 1, 1];
-        assert_eq!(png(&data, 3, 1), [1, 2, 3, 2, 3, 4]);
+        assert_eq!(png(&data, 3, 1, 1 << 20).unwrap(), [1, 2, 3, 2, 3, 4]);
     }
 
     #[test]
