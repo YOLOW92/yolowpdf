@@ -219,6 +219,10 @@ The core crate never depends on a model runtime. The OCR crate is optional.
 - Data are downloaded, not redistributed: olmOCR-bench (ODC-BY 1.0, official
   scoring code Apache-2.0) and the pdf.js test corpus (Apache-2.0).
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
+
 ## License
 
 MIT. See [LICENSE](LICENSE). Third-party notices:

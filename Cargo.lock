@@ -623,7 +623,7 @@ checksum = "d4ca08e5ef825b65b056d9efbd95c8750683f0a6d0466d02e96dc2e4e360f3d2"
 
 [[package]]
 name = "yolowpdf"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aes",
  "brotli-decompressor 6.3.1",
@@ -641,21 +641,21 @@ dependencies = [
 
 [[package]]
 name = "yolowpdf-gpu"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "yolowpdf-infer",
 ]
 
 [[package]]
 name = "yolowpdf-infer"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "yolowpdf-ocr"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde_json",
  "sha2",
@@ -667,18 +667,18 @@ dependencies = [
 
 [[package]]
 name = "yolowpdf-stat"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "yolowpdf-sys"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "yolowpdf-testkit"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libc",
 ]
