@@ -26,7 +26,9 @@ pub fn extract_with(bytes: &[u8], opts: &Options) -> Result<PdfDocument, Error>;
 
 `PdfDocument` has `markdown`, `pages`, `metadata`, `scanned`, `inferred_title`,
 `warnings`, `images`, and `ocr`. Each `PdfPage` has its Markdown, character count,
-image references, scan flag, quality report and OCR flag.
+image references, scan flag, quality report and OCR flag. Each `PdfImage` provides
+`file_name()`, `mime_type()`, and (when `ImageOptions::export` is enabled) `data_url()`
+powered by [`yolow64`](https://crates.io/crates/yolow64).
 
 `Error` is `Malformed`, `Encrypted`, `TooLarge` or `Timeout`. A parser panic is
 caught inside `extract_with` and returned as `Malformed("parser panicked")`.

@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 370" width="100%" role="img">
+  <defs>
+    <linearGradient id="headerGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="60%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#312e81"/>
+    </linearGradient>
+    <linearGradient id="primaryGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#4338ca"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+    <linearGradient id="tealGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#0f766e"/>
+      <stop offset="100%" stop-color="#14b8a6"/>
+    </linearGradient>
+    <linearGradient id="blueGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#0369a1"/>
+      <stop offset="100%" stop-color="#0ea5e9"/>
+    </linearGradient>
+    <filter id="cardShadow" x="-4%" y="-4%" width="108%" height="112%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.05"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#4f46e5"/>
+    </marker>
+  </defs>
+  <style>
+    .title { font: 700 18.5px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; fill: #ffffff; letter-spacing: -0.2px; }
+    .subtitle { font: 400 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; fill: #cbd5e1; }
+    .panel-title { font: 700 14.5px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; fill: #0f172a; }
+    .panel-sub { font: 400 11.5px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; fill: #64748b; }
+    .label { font: 500 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; fill: #475569; }
+    .label-hi { font: 700 12.5px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; fill: #0f172a; }
+    .val { font: 500 11.5px ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; fill: #475569; }
+    .val-hi { font: 700 12px ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; fill: #4f46e5; }
+    .val-teal { font: 700 12px ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; fill: #0d9488; }
+    .axis { font: 500 10.5px ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; fill: #64748b; }
+    .kpi-num { font: 800 22px ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; letter-spacing: -0.5px; }
+    .kpi-title { font: 700 11px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; fill: #0f172a; }
+    .kpi-sub { font: 400 10.5px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; fill: #64748b; }
+    .badge { font: 700 10.5px ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; }
+    .code { font: 600 11.5px ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; fill: #0f172a; }
+    .note { font: 400 11px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; fill: #475569; }
+  </style>
+  <rect width="1040" height="370" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+  <rect x="0" y="0" width="1040" height="68" rx="14" fill="url(#headerGrad)"/>
+  <rect x="0" y="54" width="1040" height="14" fill="url(#headerGrad)"/>
+  <text x="26" y="30" class="title">yolowpdf Architecture — Zero-Native-Dependency PDF Reader &amp; Optional OCR</text>
+  <text x="26" y="50" class="subtitle">From raw PDF bytes to clean Markdown, LaTeX math, tables, and yolow64 Base64 Data URLs</text>
+  <rect x="887" y="19" width="131" height="28" rx="14" fill="#1e1b4b" stroke="#6366f1" stroke-width="1"/>
+  <text x="952.5" y="37" text-anchor="middle" class="badge" fill="#e0e7ff">Rust 2024 · MIT</text>
+  <rect x="20.0" y="86" width="187.2" height="196" rx="10" fill="#ffffff" stroke="#c7d2fe" stroke-width="1.5" filter="url(#cardShadow)"/>
+  <rect x="20.0" y="86" width="187.2" height="48" rx="10" fill="#eef2ff"/>
+  <rect x="20.0" y="124" width="187.2" height="10" fill="#eef2ff"/>
+  <text x="32.0" y="107" class="label-hi" fill="#4f46e5">1. File Structure</text>
+  <text x="32.0" y="124" class="kpi-sub">xref &amp; Stream Layer</text>
+  <circle cx="35.0" cy="150" r="2.5" fill="#4f46e5"/>
+  <text x="43.0" y="154" class="note">xref tables &amp; object streams</text>
+  <circle cx="35.0" cy="174" r="2.5" fill="#4f46e5"/>
+  <text x="43.0" y="178" class="note">Damaged-file full-scan repair</text>
+  <circle cx="35.0" cy="198" r="2.5" fill="#4f46e5"/>
+  <text x="43.0" y="202" class="note">AES / RC4 stream decryption</text>
+  <circle cx="35.0" cy="222" r="2.5" fill="#4f46e5"/>
+  <text x="43.0" y="226" class="note">Flate, Brotli, LZW, ASCII85/Hex</text>
+  <circle cx="35.0" cy="246" r="2.5" fill="#4f46e5"/>
+  <text x="43.0" y="250" class="note">Pre-allocation budget guards</text>
+  <line x1="209.2" y1="184.0" x2="221.2" y2="184.0" stroke="#4f46e5" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="223.2" y="86" width="187.2" height="196" rx="10" fill="#ffffff" stroke="#bae6fd" stroke-width="1.5" filter="url(#cardShadow)"/>
+  <rect x="223.2" y="86" width="187.2" height="48" rx="10" fill="#f0f9ff"/>
+  <rect x="223.2" y="124" width="187.2" height="10" fill="#f0f9ff"/>
+  <text x="235.2" y="107" class="label-hi" fill="#0284c7">2. Fonts &amp; CJK</text>
+  <text x="235.2" y="124" class="kpi-sub">Glyph &amp; Encoding Layer</text>
+  <circle cx="238.2" cy="150" r="2.5" fill="#0284c7"/>
+  <text x="246.2" y="154" class="note">Type1, TrueType, CFF, Type3</text>
+  <circle cx="238.2" cy="174" r="2.5" fill="#0284c7"/>
+  <text x="246.2" y="178" class="note">CIDFonts &amp; ToUnicode CMaps</text>
+  <circle cx="238.2" cy="198" r="2.5" fill="#0284c7"/>
+  <text x="246.2" y="202" class="note">Adobe-GB1 / CNS1 / J1 / KR1</text>
+  <circle cx="238.2" cy="222" r="2.5" fill="#0284c7"/>
+  <text x="246.2" y="226" class="note">CJK collection fallback</text>
+  <circle cx="238.2" cy="246" r="2.5" fill="#0284c7"/>
+  <text x="246.2" y="250" class="note">Text matrices &amp; glyph widths</text>
+  <line x1="412.4" y1="184.0" x2="424.4" y2="184.0" stroke="#4f46e5" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="426.4" y="86" width="187.2" height="196" rx="10" fill="#ffffff" stroke="#99f6e4" stroke-width="1.5" filter="url(#cardShadow)"/>
+  <rect x="426.4" y="86" width="187.2" height="48" rx="10" fill="#f0fdfa"/>
+  <rect x="426.4" y="124" width="187.2" height="10" fill="#f0fdfa"/>
+  <text x="438.4" y="107" class="label-hi" fill="#0d9488">3. Layout Engine</text>
+  <text x="438.4" y="124" class="kpi-sub">Reading Order &amp; Quality</text>
+  <circle cx="441.4" cy="150" r="2.5" fill="#0d9488"/>
+  <text x="449.4" y="154" class="note">Multi-column block ordering</text>
+  <circle cx="441.4" cy="174" r="2.5" fill="#0d9488"/>
+  <text x="449.4" y="178" class="note">Heading hierarchy inference</text>
+  <circle cx="441.4" cy="198" r="2.5" fill="#0d9488"/>
+  <text x="449.4" y="202" class="note">Header &amp; footer removal</text>
+  <circle cx="441.4" cy="222" r="2.5" fill="#0d9488"/>
+  <text x="449.4" y="226" class="note">Cross-page text &amp; hyphens</text>
+  <circle cx="441.4" cy="246" r="2.5" fill="#0d9488"/>
+  <text x="449.4" y="250" class="note">Wilson CI PageQuality score</text>
+  <line x1="615.6" y1="184.0" x2="627.6" y2="184.0" stroke="#4f46e5" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="629.6" y="86" width="187.2" height="196" rx="10" fill="#ffffff" stroke="#a7f3d0" stroke-width="1.5" filter="url(#cardShadow)"/>
+  <rect x="629.6" y="86" width="187.2" height="48" rx="10" fill="#ecfdf5"/>
+  <rect x="629.6" y="124" width="187.2" height="10" fill="#ecfdf5"/>
+  <text x="641.6" y="107" class="label-hi" fill="#059669">4. Tables, Math &amp; Img</text>
+  <text x="641.6" y="124" class="kpi-sub">Structured Reconstruction</text>
+  <circle cx="644.6" cy="150" r="2.5" fill="#059669"/>
+  <text x="652.6" y="154" class="note">Ruled &amp; borderless tables</text>
+  <circle cx="644.6" cy="174" r="2.5" fill="#059669"/>
+  <text x="652.6" y="178" class="note">Inline LaTeX math baselines</text>
+  <circle cx="644.6" cy="198" r="2.5" fill="#059669"/>
+  <text x="652.6" y="202" class="note">Raw JPEG / JP2 / JBIG2 / CCITT</text>
+  <circle cx="644.6" cy="222" r="2.5" fill="#059669"/>
+  <text x="652.6" y="226" class="note">yolow64 SIMD Base64 Data URL</text>
+  <circle cx="644.6" cy="246" r="2.5" fill="#059669"/>
+  <text x="652.6" y="250" class="note">Scanned-page ink detection</text>
+  <line x1="818.8" y1="184.0" x2="830.8" y2="184.0" stroke="#4f46e5" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="832.8" y="86" width="187.2" height="196" rx="10" fill="#ffffff" stroke="#fde68a" stroke-width="1.5" filter="url(#cardShadow)"/>
+  <rect x="832.8" y="86" width="187.2" height="48" rx="10" fill="#fffbeb"/>
+  <rect x="832.8" y="124" width="187.2" height="10" fill="#fffbeb"/>
+  <text x="844.8" y="107" class="label-hi" fill="#d97706">5. Optional PageOcr</text>
+  <text x="844.8" y="124" class="kpi-sub">yolowpdf-ocr (CPU / CUDA)</text>
+  <circle cx="847.8" cy="150" r="2.5" fill="#d97706"/>
+  <text x="855.8" y="154" class="note">PP-OCRv6 det + rec models</text>
+  <circle cx="847.8" cy="174" r="2.5" fill="#d97706"/>
+  <text x="855.8" y="178" class="note">Optional PP-DocLayoutV3</text>
+  <circle cx="847.8" cy="198" r="2.5" fill="#d97706"/>
+  <text x="855.8" y="202" class="note">Optional PP-FormulaNet_plus-L</text>
+  <circle cx="847.8" cy="222" r="2.5" fill="#d97706"/>
+  <text x="855.8" y="226" class="note">CUDA PTX GPU batch scheduler</text>
+  <circle cx="847.8" cy="246" r="2.5" fill="#d97706"/>
+  <text x="855.8" y="250" class="note">Auto CPU fallback + OcrReport</text>
+  <rect x="20" y="298" width="1000" height="54" rx="10" fill="#ffffff" stroke="#e2e8f0" filter="url(#cardShadow)"/>
+  <text x="38" y="321" class="label-hi">Unified Output: PdfDocument</text>
+  <text x="235" y="321" class="code">markdown · pages · metadata · inferred_title · images (file_name / data_url) · warnings · ocr</text>
+  <text x="38" y="340" class="panel-sub">Adaptive OLS + EVT parse timeouts (yolowpdf-stat) · Process allocator tuning (yolowpdf-sys) · Base64 Data URL encoding powered by yolow64 0.3</text>
+</svg>

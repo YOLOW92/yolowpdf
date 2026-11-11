@@ -622,8 +622,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4ca08e5ef825b65b056d9efbd95c8750683f0a6d0466d02e96dc2e4e360f3d2"
 
 [[package]]
+name = "yolow64"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dfe1db2870e6d1a1eeb7da28538ee62534045658d2e76b41b533607c33210bec"
+
+[[package]]
 name = "yolowpdf"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aes",
  "brotli-decompressor 6.3.1",
@@ -634,6 +640,7 @@ dependencies = [
  "proptest",
  "serde_json",
  "sha2",
+ "yolow64",
  "yolowpdf-stat",
  "yolowpdf-sys",
  "yolowpdf-testkit",
@@ -641,21 +648,21 @@ dependencies = [
 
 [[package]]
 name = "yolowpdf-gpu"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "yolowpdf-infer",
 ]
 
 [[package]]
 name = "yolowpdf-infer"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "yolowpdf-ocr"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde_json",
  "sha2",
@@ -667,18 +674,18 @@ dependencies = [
 
 [[package]]
 name = "yolowpdf-stat"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "yolowpdf-sys"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "yolowpdf-testkit"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "libc",
 ]

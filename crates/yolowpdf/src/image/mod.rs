@@ -110,6 +110,24 @@ impl PdfImage {
             self.extension
         ) // [协议] SHA-256 十六进制与位运算；32 位十六进制 = 128 位哈希前缀
     }
+
+    /// 导出文件的 MIME 类型。
+    pub fn mime_type(&self) -> &'static str {
+        match self.extension {
+            "jpg" => "image/jpeg",
+            "jp2" | "j2k" => "image/jp2",
+            "tif" => "image/tiff",
+            "jb2" => "image/x-jbig2",
+            "png" => "image/png",
+            _ => "application/octet-stream",
+        }
+    }
+
+    /// 将导出的图片字节编码为 `data:<mime>;base64,...` 内联 URI（需开启 [`crate::ImageOptions::export`]）。
+    pub fn data_url(&self) -> Option<String> {
+        let bytes = self.data.as_deref()?;
+        yolow64::encode_data_url(self.mime_type(), bytes).ok()
+    }
 }
 
 /// 一张图的来源：对象号或内联图像的内容。

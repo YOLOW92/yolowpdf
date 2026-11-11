@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 440" width="100%" role="img">
+  <defs>
+    <linearGradient id="headerGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="60%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#312e81"/>
+    </linearGradient>
+    <linearGradient id="primaryGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#4338ca"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+    <linearGradient id="tealGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#0f766e"/>
+      <stop offset="100%" stop-color="#14b8a6"/>
+    </linearGradient>
+    <linearGradient id="blueGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#0369a1"/>
+      <stop offset="100%" stop-color="#0ea5e9"/>
+    </linearGradient>
+    <filter id="cardShadow" x="-4%" y="-4%" width="108%" height="112%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.05"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#4f46e5"/>
+    </marker>
+  </defs>
+  <style>
+    .title { font: 700 18.5px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; fill: #ffffff; letter-spacing: -0.2px; }
+    .subtitle { font: 400 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; fill: #cbd5e1; }
+    .panel-title { font: 700 14.5px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; fill: #0f172a; }
+    .panel-sub { font: 400 11.5px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; fill: #64748b; }
+    .label { font: 500 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; fill: #475569; }
+    .label-hi { font: 700 12.5px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; fill: #0f172a; }
+    .val { font: 500 11.5px ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; fill: #475569; }
+    .val-hi { font: 700 12px ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; fill: #4f46e5; }
+    .val-teal { font: 700 12px ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; fill: #0d9488; }
+    .axis { font: 500 10.5px ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; fill: #64748b; }
+    .kpi-num { font: 800 22px ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; letter-spacing: -0.5px; }
+    .kpi-title { font: 700 11px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; fill: #0f172a; }
+    .kpi-sub { font: 400 10.5px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; fill: #64748b; }
+    .badge { font: 700 10.5px ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; }
+    .code { font: 600 11.5px ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; fill: #0f172a; }
+    .note { font: 400 11px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; fill: #475569; }
+  </style>
+  <rect width="1040" height="440" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+  <rect x="0" y="0" width="1040" height="68" rx="14" fill="url(#headerGrad)"/>
+  <rect x="0" y="54" width="1040" height="14" fill="url(#headerGrad)"/>
+  <text x="26" y="30" class="title">yolowpdf — Born-Digital PDF to Markdown Benchmark (olmOCR-bench, 1,269 Pages)</text>
+  <text x="26" y="50" class="subtitle">i7-10700 · 15 GB RAM · Pure Rust zero-native-dependency parser · Exploratory run</text>
+  <rect x="845" y="19" width="173" height="28" rx="14" fill="#1e1b4b" stroke="#6366f1" stroke-width="1"/>
+  <text x="931.5" y="37" text-anchor="middle" class="badge" fill="#e0e7ff">1,900 pages/s · 24 MB</text>
+  <rect x="20.0" y="82" width="241.0" height="76" rx="10" fill="#ffffff" stroke="#c7d2fe" filter="url(#cardShadow)"/>
+  <rect x="20.0" y="82" width="6" height="76" rx="3" fill="#4f46e5"/>
+  <text x="38.0" y="111" class="kpi-num" fill="#4f46e5">1,900 pages/s</text>
+  <text x="38.0" y="130" class="kpi-title">Throughput (0.668 s wall)</text>
+  <text x="38.0" y="146" class="kpi-sub">23.9x pypdf · 290x pymupdf4llm</text>
+  <rect x="273.0" y="82" width="241.0" height="76" rx="10" fill="#ffffff" stroke="#99f6e4" filter="url(#cardShadow)"/>
+  <rect x="273.0" y="82" width="6" height="76" rx="3" fill="#0d9488"/>
+  <text x="291.0" y="111" class="kpi-num" fill="#0d9488">3.2 ms / 9.0 ms</text>
+  <text x="291.0" y="130" class="kpi-title">p50 / p95 Page Latency</text>
+  <text x="291.0" y="146" class="kpi-sub">vs 73.9 ms pypdf · 845.6 ms pymupdf4llm</text>
+  <rect x="526.0" y="82" width="241.0" height="76" rx="10" fill="#ffffff" stroke="#a7f3d0" filter="url(#cardShadow)"/>
+  <rect x="526.0" y="82" width="6" height="76" rx="3" fill="#059669"/>
+  <text x="544.0" y="111" class="kpi-num" fill="#059669">24 MB Peak</text>
+  <text x="544.0" y="130" class="kpi-title">Per-Worker cgroup Memory</text>
+  <text x="544.0" y="146" class="kpi-sub">25x less than pymupdf4llm (600 MB)</text>
+  <rect x="779.0" y="82" width="241.0" height="76" rx="10" fill="#ffffff" stroke="#bae6fd" filter="url(#cardShadow)"/>
+  <rect x="779.0" y="82" width="6" height="76" rx="3" fill="#0284c7"/>
+  <text x="797.0" y="111" class="kpi-num" fill="#0284c7">0.592 Score</text>
+  <text x="797.0" y="130" class="kpi-title">1,269 / 1,269 Completed</text>
+  <text x="797.0" y="146" class="kpi-sub">#1 overall completion + quality score</text>
+  <rect x="20" y="172" width="493.0" height="248" rx="10" fill="#ffffff" stroke="#e2e8f0" filter="url(#cardShadow)"/>
+  <text x="38" y="197" class="panel-title">Throughput (pages/s ↑) &amp; Wall Time</text>
+  <text x="38" y="215" class="panel-sub">1,269 born-digital pages · Higher throughput is better</text>
+  <rect x="28" y="230" width="477.0" height="24" rx="5" fill="#eef2ff"/>
+  <text x="114" y="246" text-anchor="end" class="label-hi">yolowpdf</text>
+  <rect x="124" y="234" width="119.0" height="16" rx="4" fill="url(#primaryGrad)"/>
+  <text x="251.0" y="246" class="val-hi">1,900 pages/s  (0.668 s · p50 3.2 ms)</text>
+  <text x="114" y="275" text-anchor="end" class="label">pypdf</text>
+  <rect x="124" y="263" width="28.5" height="16" rx="4" fill="#94a3b8"/>
+  <text x="160.5" y="275" class="val">79.4 pages/s  (15.3 s · p50 73.9 ms)</text>
+  <text x="114" y="304" text-anchor="end" class="label">MarkItDown</text>
+  <rect x="124" y="292" width="12.9" height="16" rx="4" fill="#94a3b8"/>
+  <text x="144.9" y="304" class="val">13.6 pages/s  (88.5 s · p50 172.8 ms)</text>
+  <text x="114" y="333" text-anchor="end" class="label">pymupdf4llm</text>
+  <rect x="124" y="321" width="9.3" height="16" rx="4" fill="#94a3b8"/>
+  <text x="141.3" y="333" class="val">6.56 pages/s  (184.9 s · p50 845.6 ms)</text>
+  <text x="114" y="362" text-anchor="end" class="label">Docling GPU</text>
+  <rect x="124" y="350" width="6.7" height="16" rx="4" fill="#94a3b8"/>
+  <text x="138.7" y="362" class="val">3.18 pages/s  (185.2 s · 589/1269)</text>
+  <text x="114" y="391" text-anchor="end" class="label">Docling CPU</text>
+  <rect x="124" y="379" width="5.0" height="16" rx="4" fill="#94a3b8"/>
+  <text x="137.0" y="391" class="val">0.48 pages/s  (185.8 s · 89/1269)</text>
+  <rect x="527.0" y="172" width="493.0" height="248" rx="10" fill="#ffffff" stroke="#e2e8f0" filter="url(#cardShadow)"/>
+  <text x="545.0" y="197" class="panel-title">Combined Score (↑) &amp; Peak Worker Memory (MB ↓)</text>
+  <text x="545.0" y="215" class="panel-sub">Higher score &amp; lower per-worker cgroup peak memory are better</text>
+  <rect x="535.0" y="230" width="477.0" height="24" rx="5" fill="#f0fdfa"/>
+  <text x="635.0" y="246" text-anchor="end" class="label-hi">yolowpdf</text>
+  <rect x="645.0" y="234" width="163.9" height="16" rx="4" fill="url(#tealGrad)"/>
+  <text x="816.9" y="246" class="val-teal">0.592  |  24 MB  (1269/1269)</text>
+  <text x="635.0" y="275" text-anchor="end" class="label">pymupdf4llm</text>
+  <rect x="645.0" y="263" width="135.4" height="16" rx="4" fill="#94a3b8"/>
+  <text x="788.4" y="275" class="val">0.489  |  600 MB  (1213/1269)</text>
+  <text x="635.0" y="304" text-anchor="end" class="label">pypdf</text>
+  <rect x="645.0" y="292" width="106.6" height="16" rx="4" fill="#94a3b8"/>
+  <text x="759.6" y="304" class="val">0.385  |  186 MB  (1213/1269)</text>
+  <text x="635.0" y="333" text-anchor="end" class="label">MarkItDown</text>
+  <rect x="645.0" y="321" width="103.3" height="16" rx="4" fill="#94a3b8"/>
+  <text x="756.3" y="333" class="val">0.373  |  1,171 MB  (1204/1269)</text>
+  <text x="635.0" y="362" text-anchor="end" class="label">Docling GPU*</text>
+  <rect x="645.0" y="350" width="32.1" height="16" rx="4" fill="#94a3b8"/>
+  <text x="685.1" y="362" class="val">0.116  |  2,323 MB  (589/1269)</text>
+  <text x="635.0" y="391" text-anchor="end" class="label">Docling CPU*</text>
+  <rect x="645.0" y="379" width="4.0" height="16" rx="4" fill="#94a3b8"/>
+  <text x="657.0" y="391" class="val">0.012  |  2,745 MB  (89/1269)</text>
+</svg>
