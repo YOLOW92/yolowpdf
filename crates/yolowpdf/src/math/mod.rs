@@ -1,7 +1,9 @@
 //! 数学公式解析与 LaTeX 重构引擎。
 //! 包含数学字体识别、TeX 命令映射、上下标多级分层树与行内/行间公式渲染。
 
+pub(crate) mod big_ops;
 pub(crate) mod footnote;
+pub(crate) mod spatial;
 pub(crate) mod symbols;
 pub(crate) mod tex;
 
@@ -192,5 +194,96 @@ mod tests {
         assert_eq!(math_alnum('𝑥'), Some((None, 'x')));
         assert_eq!(math_alnum('𝔽'), Some((Some("\\mathbb"), 'F')));
         assert_eq!(math_alnum('𝟏'), Some((Some("\\mathbf"), '1')));
+    }
+
+    #[test]
+    fn disentangles_overlapping_sub_and_sup() {
+        // d_x^{(n)}: '(' at x=5..7.5, 'x' at x=5.5..9.0, 'n)' at x=7.5..12.5
+        let mut lp = glyph("(", 5.0, 103.6, 7.0, Text);
+        lp.x_end = 7.5;
+        let mut sub_x = glyph("x", 5.5, 98.5, 7.0, Italic);
+        sub_x.x_end = 9.0;
+        let mut sup_n = glyph("n)", 7.5, 103.6, 7.0, Italic);
+        sup_n.x_end = 12.5;
+        let w = [vec![glyph("d", 0.0, 100.0, 10.0, Italic), lp, sub_x, sup_n]];
+        let refs: Vec<&[Glyph]> = w.iter().map(|v| v.as_slice()).collect();
+        assert_eq!(line(&refs).unwrap(), "$d_{x}^{(n)}$");
+    }
+
+    #[test]
+    fn baseline_prime_does_not_cause_double_subscript() {
+        // v_{c}'{}_{1}: prime has size=10 (lvl 0) and must preserve has_sub
+        let w = [vec![
+            glyph("v", 0.0, 100.0, 10.0, Italic),
+            glyph("c", 5.0, 98.5, 7.0, Italic),
+            glyph("′", 9.0, 100.0, 10.0, Symbol),
+            glyph("1", 13.0, 98.5, 7.0, Text),
+        ]];
+        let refs: Vec<&[Glyph]> = w.iter().map(|v| v.as_slice()).collect();
+        assert_eq!(line(&refs).unwrap(), "$v_{c}'{}_{1}$");
+    }
+
+    #[test]
+    fn ellipsis_and_negation_and_split_liminf() {
+        let w = [
+            vec![glyph("lim", 0.0, 100.0, 10.0, Text)],
+            vec![
+                glyph("inf", 18.0, 100.0, 10.0, Text),
+                glyph("x", 35.0, 100.0, 10.0, Italic),
+                glyph("\u{0338}", 42.0, 100.0, 10.0, Symbol),
+                glyph("=", 42.0, 100.0, 10.0, Text),
+                glyph(".", 50.0, 100.0, 10.0, Text),
+                glyph(".", 54.0, 100.0, 10.0, Text),
+                glyph(".", 58.0, 100.0, 10.0, Text),
+            ],
+        ];
+        let refs: Vec<&[Glyph]> = w.iter().map(|v| v.as_slice()).collect();
+        assert_eq!(line(&refs).unwrap(), "$\\liminf x\\neq \\ldots$");
+    }
+
+    #[test]
+    fn spatial_handles_extreme_coords_and_multiglyph_lim() {
+        // Extreme y = 1e20 must not overflow i32 in YBuckets::slot
+        let mut extreme = vec![
+            glyph("x", 10.0, 1e20, 10.0, Italic),
+            glyph("y", 20.0, -1e20, 10.0, Italic),
+            glyph("z", 30.0, f64::NAN, 10.0, Italic),
+        ];
+        let mut rules = vec![crate::geom::Rule {
+            x0: 10.0,
+            y0: 1e20,
+            x1: 30.0,
+            y1: 1e20,
+        }];
+        spatial::reconstruct(&mut extreme, &mut rules, 600.0, 800.0);
+
+        // Multi-glyph "l"+"i"+"m" with close subscript (y - 0.28*body) must not self-reject
+        let mk = |t: &str, x: f64, x_end: f64, y: f64, sz: f64, m: MathKind| Glyph {
+            text: t.into(),
+            x,
+            y,
+            x_end,
+            size: sz,
+            bold: false,
+            math: m,
+            mcid: None,
+            artifact: false,
+        };
+        let mut glyphs = vec![
+            mk("l", 100.0, 103.0, 500.0, 10.0, Text),
+            mk("i", 103.0, 106.0, 500.0, 10.0, Text),
+            mk("m", 106.0, 114.0, 500.0, 10.0, Text),
+            mk("n", 101.0, 105.0, 497.2, 7.0, Italic),
+            mk("→", 105.5, 110.0, 497.2, 7.0, Symbol),
+            mk("∞", 110.5, 115.0, 497.2, 7.0, Symbol),
+        ];
+        let mut no_rules = Vec::new();
+        spatial::reconstruct(&mut glyphs, &mut no_rules, 600.0, 800.0);
+        assert!(
+            glyphs
+                .iter()
+                .any(|g| g.math == MathKind::Prebuilt && g.text == "\\lim_{n\\to \\infty}"),
+            "multi-glyph lim must attach close subscript: {glyphs:?}"
+        );
     }
 }

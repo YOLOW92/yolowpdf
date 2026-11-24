@@ -9,19 +9,58 @@ use super::{Dictionary, Object, ObjectId, StringFormat};
 /// 数组/字典的最大嵌套深度，防止恶意输入把栈打穿。
 const MAX_DEPTH: usize = 100;
 
+const CLS_WHITE: u8 = 1;
+const CLS_DELIM: u8 = 2;
+
+static BYTE_CLASS: [u8; 256] = {
+    let mut t = [0u8; 256];
+    t[b' ' as usize] = CLS_WHITE;
+    t[b'\t' as usize] = CLS_WHITE;
+    t[b'\n' as usize] = CLS_WHITE;
+    t[b'\r' as usize] = CLS_WHITE;
+    t[0] = CLS_WHITE;
+    t[0x0C] = CLS_WHITE;
+    t[b'(' as usize] = CLS_DELIM;
+    t[b')' as usize] = CLS_DELIM;
+    t[b'<' as usize] = CLS_DELIM;
+    t[b'>' as usize] = CLS_DELIM;
+    t[b'[' as usize] = CLS_DELIM;
+    t[b']' as usize] = CLS_DELIM;
+    t[b'{' as usize] = CLS_DELIM;
+    t[b'}' as usize] = CLS_DELIM;
+    t[b'/' as usize] = CLS_DELIM;
+    t[b'%' as usize] = CLS_DELIM;
+    t
+};
+
+static HEX_LUT: [u8; 256] = {
+    let mut t = [0xFFu8; 256];
+    let mut b = b'0';
+    while b <= b'9' {
+        t[b as usize] = b - b'0';
+        b += 1;
+    }
+    let mut b = b'a';
+    while b <= b'f' {
+        t[b as usize] = b - b'a' + 10;
+        b += 1;
+    }
+    let mut b = b'A';
+    while b <= b'F' {
+        t[b as usize] = b - b'A' + 10;
+        b += 1;
+    }
+    t
+};
+
+#[inline(always)]
 pub(crate) fn is_whitespace(b: u8) -> bool {
-    matches!(b, b' ' | b'\t' | b'\n' | b'\r' | b'\0' | b'\x0C')
+    BYTE_CLASS[b as usize] == CLS_WHITE
 }
 
-pub(crate) fn is_delimiter(b: u8) -> bool {
-    matches!(
-        b,
-        b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%'
-    )
-}
-
+#[inline(always)]
 fn is_regular(b: u8) -> bool {
-    !is_whitespace(b) && !is_delimiter(b)
+    BYTE_CLASS[b as usize] == 0
 }
 
 /// 结束一个对象、不能被当成普通词跳过的关键字。
@@ -383,13 +422,10 @@ impl<'a> Parser<'a> {
     }
 }
 
+#[inline(always)]
 fn hex_value(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
-        _ => None,
-    }
+    let v = HEX_LUT[b as usize];
+    (v != 0xFF).then_some(v)
 }
 
 /// 数字词：`[+-]?digits`、`[+-]?digits.digits*`、`[+-]?.digits`。
@@ -422,7 +458,31 @@ pub(crate) fn number(w: &[u8]) -> Option<Object> {
     {
         return None;
     }
-    let mut text = String::with_capacity(body.len() + 1);
+    // 无小数点快速路径：直接累积 u64，零堆分配
+    if !dot && body.len() <= 18 {
+        let mut acc = 0u64;
+        for &b in body {
+            acc = acc * 10 + u64::from(b - b'0');
+        }
+        let i = if negative { -(acc as i64) } else { acc as i64 };
+        return Some(Object::Integer(i));
+    }
+    let mut buf = [0u8; 64];
+    let need = body.len() + usize::from(negative);
+    if need <= buf.len() {
+        let mut off = 0;
+        if negative {
+            buf[0] = b'-';
+            off = 1;
+        }
+        buf[off..off + body.len()].copy_from_slice(body);
+        let text = std::str::from_utf8(&buf[..need]).ok()?;
+        if !dot && let Ok(i) = text.parse::<i64>() {
+            return Some(Object::Integer(i));
+        }
+        return text.parse::<f32>().ok().map(Object::Real);
+    }
+    let mut text = String::with_capacity(need);
     if negative {
         text.push('-');
     }

@@ -76,8 +76,15 @@ fn inflate(input: &[u8], limit: usize) -> Result<Vec<u8>, DecodeError> {
 }
 
 fn inflate_with(input: &[u8], zlib: bool, limit: usize) -> Result<Vec<u8>, DecodeError> {
+    use std::cell::RefCell;
+
     use miniz_oxide::inflate::TINFLStatus;
     use miniz_oxide::inflate::core::{DecompressorOxide, decompress, inflate_flags};
+
+    thread_local! {
+        static INFLATE_STATE: RefCell<Box<DecompressorOxide>> =
+            RefCell::new(Box::<DecompressorOxide>::default());
+    }
 
     let mut flags = inflate_flags::TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF
         | inflate_flags::TINFL_FLAG_HAS_MORE_INPUT;
@@ -85,41 +92,44 @@ fn inflate_with(input: &[u8], zlib: bool, limit: usize) -> Result<Vec<u8>, Decod
         flags |=
             inflate_flags::TINFL_FLAG_PARSE_ZLIB_HEADER | inflate_flags::TINFL_FLAG_IGNORE_ADLER32;
     }
-    let mut state = Box::<DecompressorOxide>::default();
-    let cap = limit.saturating_add(1);
-    let mut out = vec![0u8; input.len().saturating_mul(3).max(1024).min(cap)];
-    let mut in_pos = 0;
-    let mut out_pos = 0;
-    loop {
-        // 输入给完以后去掉“还有输入”标志，让解码器知道数据到头了
-        let f = if in_pos >= input.len() {
-            flags & !inflate_flags::TINFL_FLAG_HAS_MORE_INPUT
-        } else {
-            flags
-        };
-        let (status, read, written) =
-            decompress(&mut state, &input[in_pos..], &mut out, out_pos, f);
-        in_pos += read;
-        out_pos += written;
-        match status {
-            TINFLStatus::HasMoreOutput => {
-                if out_pos > limit {
-                    return Err(DecodeError::TooLarge);
+    INFLATE_STATE.with(|cell| {
+        let mut state = cell.borrow_mut();
+        state.init();
+        let cap = limit.saturating_add(1);
+        let mut out = vec![0u8; input.len().saturating_mul(3).max(1024).min(cap)];
+        let mut in_pos = 0;
+        let mut out_pos = 0;
+        loop {
+            // 输入给完以后去掉“还有输入”标志，让解码器知道数据到头了
+            let f = if in_pos >= input.len() {
+                flags & !inflate_flags::TINFL_FLAG_HAS_MORE_INPUT
+            } else {
+                flags
+            };
+            let (status, read, written) =
+                decompress(&mut state, &input[in_pos..], &mut out, out_pos, f);
+            in_pos += read;
+            out_pos += written;
+            match status {
+                TINFLStatus::HasMoreOutput => {
+                    if out_pos > limit {
+                        return Err(DecodeError::TooLarge);
+                    }
+                    // 翻倍，但总长不超过上限 + 1（再多一个字节就足以判定超限）
+                    let len = out.len().saturating_mul(2).min(cap);
+                    out.resize(len, 0);
                 }
-                // 翻倍，但总长不超过上限 + 1（再多一个字节就足以判定超限）
-                let len = out.len().saturating_mul(2).min(cap);
-                out.resize(len, 0);
+                TINFLStatus::NeedsMoreInput if in_pos < input.len() => {}
+                // 完成、输入截断或数据损坏：都保留已经解出的部分
+                _ => break,
             }
-            TINFLStatus::NeedsMoreInput if in_pos < input.len() => {}
-            // 完成、输入截断或数据损坏：都保留已经解出的部分
-            _ => break,
         }
-    }
-    if out_pos > limit {
-        return Err(DecodeError::TooLarge);
-    }
-    out.truncate(out_pos);
-    Ok(out)
+        if out_pos > limit {
+            return Err(DecodeError::TooLarge);
+        }
+        out.truncate(out_pos);
+        Ok(out)
+    })
 }
 
 /// LZW（9–12 位码，256 清表，257 结束）。EarlyChange=1 时码宽提前一个码切换（PDF 默认）。

@@ -94,6 +94,8 @@ pub(crate) fn run(
         qualities.push(quality);
         // 旋转的字：整页横排的转正，少数竖写的拼成行，后面和别的行一起排版
         let turned_lines = orient::orient(&mut ink);
+        // 2D 数学结构重构（分式、根号、上划线、大型算子上下限）：在逐行切分前折叠到等式基线
+        math::spatial::reconstruct(&mut ink.glyphs, &mut ink.rules, ink.width, ink.height);
         let text_chars: usize = ink
             .glyphs
             .iter()

@@ -30,6 +30,18 @@ pub(crate) const FUNCS: &[&str] = &[
     "cosh", "tanh", "coth", "arcsin", "arccos", "arctan",
 ];
 
+/// 标准数学算子名（非 KaTeX 内置宏，输出为 `\operatorname{...}`）。
+pub(crate) const OPERATORS: &[&str] = &[
+    "Hom", "Ext", "Tor", "Spec", "Proj", "Res", "Tr", "tr", "rk", "rank", "span", "supp", "vol",
+    "diam", "dist", "sgn", "sign", "ord", "id", "Im", "Re", "grad", "div", "curl", "rot", "cov",
+    "Cov", "var", "Var", "Corr", "diag", "argmin", "argmax", "Dom", "Aut", "End", "Gal", "Ind",
+    "GL", "SL", "SO", "SU", "PSL", "PGL", "mod", "const", "ess",
+];
+
+pub(crate) fn is_func_or_op(s: &str) -> bool {
+    FUNCS.contains(&s) || OPERATORS.contains(&s)
+}
+
 pub(crate) fn is_greek(c: char) -> bool {
     matches!(c, 'Α'..='Ω' | 'α'..='ω' | 'ϑ' | 'ϕ' | 'ϖ' | 'ϱ' | 'ϵ' | 'ϰ')
 }
@@ -296,6 +308,23 @@ pub(crate) fn push_char(c: char, kind: MathKind, out: &mut String) {
         '∦' => "\\nparallel",
         '∣' => "\\mid",
         '∤' => "\\nmid",
+        '∶' => ":",
+        '⊸' => "\\multimap",
+        '‴' => "'''",
+        '↠' => "\\twoheadrightarrow",
+        '↣' => "\\rightarrowtail",
+        '⇝' => "\\rightsquigarrow",
+        '⇕' => "\\Updownarrow",
+        '⇄' => "\\rightleftarrows",
+        '⇆' => "\\leftrightarrows",
+        '⪅' => "\\lessapprox",
+        '⪆' => "\\gtrapprox",
+        '⊴' => "\\trianglelefteq",
+        '⊵' => "\\trianglerighteq",
+        '⋉' => "\\ltimes",
+        '⋊' => "\\rtimes",
+        '⋈' => "\\bowtie",
+        '⨿' => "\\amalg",
         '⟨' | '〈' => "\\langle",
         '⟩' | '〉' => "\\rangle",
         '⌊' => "\\lfloor",
@@ -326,14 +355,15 @@ pub(crate) fn push_char(c: char, kind: MathKind, out: &mut String) {
         '†' => "\\dagger",
         '‡' => "\\ddagger",
         '§' => "\\S",
-        '−' | '–' => "-",
+        '−' | '–' | '‐' | '‑' => "-",
         '{' => "\\{",
         '}' => "\\}",
         '\\' => "\\backslash",
         '%' => "\\%",
         '#' => "\\#",
         '&' => "\\&",
-        '$' => "\\$",
+        // 不能输出 `\$`（会破坏外层 `$...$` 定界符匹配）
+        '$' => "",
         '_' => "\\_",
         '\u{0338}' => "\\not",
         'ℝ' => "\\mathbb{R}",

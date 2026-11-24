@@ -2,6 +2,16 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org/).
 
+## 0.1.3
+
+- **Math:** native 2-D formula reconstruction (fractions, roots, sub/superscripts, big-operator limits, overlapping scripts) from glyph geometry, with a bucketed spatial index.
+- **Layout:** recursive X-Y cut column detection with gutter checks for mixed 2/3-column pages, margin line numbers and small-type two-column text.
+- **Tables:** faster lattice grid construction; full-page background rectangles are no longer treated as table frames.
+- **Parsing speed:** zero-copy lexer and filter paths, reused inflate state, long numeric tokens no longer truncated, extreme glyph coordinates no longer overflow.
+- **Fonts:** the OML fix-up applies only to 8-bit simple fonts.
+- **Measured** on olmOCR-bench, the six born-digital categories (7,295 checks, `YOLOWPDF_FAST_MATH=1` scoring, higher is better): passed 4,419 → 4,896; mean 0.6448 → 0.6792. By category: arxiv_math 0.4076 → 0.5576, multi_column 0.6821 → 0.7161, long_tiny_text 0.4525 → 0.4796, table_tests 0.5930 → 0.5910, headers_footers 0.7342 → 0.7316, baseline 0.9992 → 0.9992.
+- **Measured** on 1,403 olmOCR PDFs, 16 threads, median of 3 runs (lower is better): 0.636 s → 0.453 s.
+
 ## 0.1.2
 
 - **Base64 Data URLs (`yolow64` 0.3):** `yolowpdf` now depends on [`yolow64`](https://crates.io/crates/yolow64) `0.3` and exposes `PdfImage::mime_type()` and `PdfImage::data_url()` to encode exported PDF images directly as `data:<mime>;base64,...` URIs for multimodal and LLM pipelines.

@@ -45,7 +45,7 @@ Published on crates.io:
 
 ```toml
 [dependencies]
-yolowpdf = "0.1.2"
+yolowpdf = "0.1.3"
 
 # Optional OCR for scanned pages:
 yolowpdf-ocr = "0.1"

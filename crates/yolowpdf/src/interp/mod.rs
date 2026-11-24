@@ -9,7 +9,7 @@ use crate::short::Short;
 
 use crate::font::{DecodedChar, Font};
 pub(crate) use crate::geom::{Glyph, ImageSource, Matrix, PageInk, Placed, Rule, Shape};
-use crate::lexer::{Lexer, Operand};
+use crate::lexer::{Lexer, OpBuf, Operand};
 use crate::obj::{deref, get, get_dict, get_name, num_array, stream_bytes};
 
 mod annot;
@@ -166,6 +166,7 @@ impl<'a> Interp<'a> {
         let mut tm = Matrix::IDENTITY;
         let mut tlm = Matrix::IDENTITY;
         let mut lx = Lexer::new(content);
+        let mut op = OpBuf::default();
         let mut chars: Vec<DecodedChar> = Vec::new();
         // 当前路径：线段（用户坐标）和矩形；曲线只移动当前点
         let mut segs: Vec<(f64, f64, f64, f64)> = Vec::new();
@@ -175,7 +176,7 @@ impl<'a> Interp<'a> {
         // 当前路径里的曲线段数和外框（用户坐标，含控制点）
         let mut curves = 0u32;
         let mut pbox = EMPTY_BOX;
-        while let Some(op) = lx.next_op() {
+        while lx.next_op_into(&mut op) {
             if self.ops_left == 0 {
                 break;
             }
@@ -188,7 +189,7 @@ impl<'a> Interp<'a> {
             }
             let a = &op.args;
             let n = |i: usize| a.get(i).and_then(Operand::num).unwrap_or(0.0);
-            match op.name.as_slice() {
+            match op.name {
                 b"q" => {
                     if stack.len() < MAX_STATE_DEPTH {
                         stack.push(gs.clone());
@@ -200,8 +201,7 @@ impl<'a> Interp<'a> {
                     }
                 }
                 b"cm" => {
-                    let v: Vec<f64> = a.iter().filter_map(Operand::num).collect();
-                    if let Some(m) = Matrix::from_slice(&v) {
+                    if let Some(m) = matrix_from_args(a) {
                         gs.ctm = m.mul(&gs.ctm);
                     }
                 }
@@ -231,8 +231,7 @@ impl<'a> Interp<'a> {
                     tm = tlm;
                 }
                 b"Tm" => {
-                    let v: Vec<f64> = a.iter().filter_map(Operand::num).collect();
-                    if let Some(m) = Matrix::from_slice(&v) {
+                    if let Some(m) = matrix_from_args(a) {
                         tlm = m;
                         tm = m;
                     }
@@ -256,9 +255,14 @@ impl<'a> Interp<'a> {
                 }
                 b"TJ" => {
                     if let Some(Operand::Array(items)) = a.first() {
+                        let font = gs.font.clone().unwrap_or_else(|| self.fallback.clone());
                         for it in items {
                             match it {
-                                Operand::Str(s) => self.show(s, &gs, &mut tm, &mut chars),
+                                Operand::Str(s) => {
+                                    chars.clear();
+                                    font.decode(s, &mut chars);
+                                    self.place(&chars, &font, &gs, &mut tm);
+                                }
                                 Operand::Num(k) => {
                                     let tx = -k / 1000.0 * gs.size * gs.h_scale;
                                     tm = Matrix::translate(tx, 0.0).mul(&tm);
@@ -297,7 +301,7 @@ impl<'a> Interp<'a> {
                     start = cur;
                 }
                 b"S" | b"s" | b"f" | b"F" | b"f*" | b"B" | b"B*" | b"b" | b"b*" => {
-                    let fill = !matches!(op.name.as_slice(), b"S" | b"s");
+                    let fill = !matches!(op.name, b"S" | b"s");
                     if !self.text_only {
                         self.rules(&segs, &rects, &gs.ctm, fill);
                         self.shapes(&segs, &rects, curves, pbox, &gs, fill);
@@ -316,13 +320,13 @@ impl<'a> Interp<'a> {
                 b"g" | b"G" | b"rg" | b"RG" | b"k" | b"K" | b"cs" | b"CS" | b"sc" | b"scn"
                 | b"SC" | b"SCN" => {
                     let (mut f, mut st) = (gs.fill, gs.stroke);
-                    self.color(&op.name, a, resources, &mut f, &mut st);
+                    self.color(op.name, a, resources, &mut f, &mut st);
                     (gs.fill, gs.stroke) = (f, st);
                 }
                 b"BI" => {
                     let inline = match (a.first(), a.get(1)) {
                         (Some(Operand::Str(h)), Some(Operand::Str(d))) => {
-                            Some(ImageSource::Inline(Rc::new((h.clone(), d.clone()))))
+                            Some(ImageSource::Inline(Rc::new((h.to_vec(), d.to_vec()))))
                         }
                         _ => None,
                     };
@@ -330,14 +334,19 @@ impl<'a> Interp<'a> {
                 }
                 b"BMC" | b"BDC" => {
                     let tag = match a.first() {
-                        Some(Operand::Name(n)) => n.as_slice(),
+                        Some(Operand::Name(n)) => n.as_ref(),
                         _ => b"",
                     };
                     let own = self.mcid(resources, a.get(1));
-                    let mcid = if depth == 0 { own } else { None };
+                    let parent = self.marked.last().copied();
+                    let mcid = if depth == 0 {
+                        own.or_else(|| parent.and_then(|m| m.mcid))
+                    } else {
+                        parent.and_then(|m| m.mcid)
+                    };
                     // 带 MCID 的 Artifact 自相矛盾（MCID 是给结构树里的正文用的，§14.8.2.2），按正文对待
-                    let artifact = (tag == b"Artifact" && own.is_none())
-                        || self.marked.last().is_some_and(|m| m.artifact);
+                    let artifact =
+                        (tag == b"Artifact" && own.is_none()) || parent.is_some_and(|m| m.artifact);
                     if self.marked.len() < MAX_MARKED_DEPTH {
                         self.marked.push(Marked { mcid, artifact });
                     }
@@ -426,7 +435,7 @@ impl<'a> Interp<'a> {
     }
 
     /// BDC 的属性：内联字典里的 /MCID，或者指向 /Properties 资源里的属性表。
-    fn mcid(&self, resources: Option<&Dictionary>, props: Option<&Operand>) -> Option<i32> {
+    fn mcid(&self, resources: Option<&Dictionary>, props: Option<&Operand<'_>>) -> Option<i32> {
         let v = match props? {
             d @ Operand::Dict(_) => d.get(b"MCID").and_then(Operand::num)?,
             Operand::Name(name) => {
@@ -520,7 +529,7 @@ impl<'a> Interp<'a> {
                     size,
                     bold: font.bold,
                     math: font.math,
-                    mcid: self.marked.iter().rev().find_map(|m| m.mcid),
+                    mcid: self.marked.last().and_then(|m| m.mcid),
                     artifact: self.marked.last().is_some_and(|m| m.artifact),
                 };
                 if dir == 0 {
@@ -583,6 +592,23 @@ impl<'a> Interp<'a> {
         }
         Ok(())
     }
+}
+
+/// 无分配读取 6 个矩阵操作数。
+#[inline]
+fn matrix_from_args(args: &[Operand<'_>]) -> Option<Matrix> {
+    let mut v = [0.0f64; 6];
+    let mut k = 0usize;
+    for a in args {
+        if let Some(n) = a.num() {
+            v[k] = n;
+            k += 1;
+            if k == 6 {
+                return v.iter().all(|x| x.is_finite()).then_some(Matrix(v));
+            }
+        }
+    }
+    None
 }
 
 /// 页面属性可以从父节点继承。

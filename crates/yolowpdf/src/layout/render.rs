@@ -174,18 +174,30 @@ fn median(mut v: Vec<f64>) -> Option<f64> {
 
 /// 一页的块切成段落，并把跨栏延续的段落接起来。
 pub(crate) fn paragraphs(blocks: Vec<Vec<Line>>) -> Vec<Para> {
-    // 整页的典型行距，用来判断段间距
+    // 整页的典型行距，以及相邻行字号抖动幅度（统计检测 OCR 文字层：原生排版中位数抖动为 0，
+    // OCR 层的逐词包围盒字号中位数抖动常超过 6%，需要放宽合段字号容差与标题字号门槛）
     let mut diffs = Vec::new();
+    let mut size_jitters = Vec::new();
     for b in &blocks {
         for w in b.windows(2) {
             let d = w[0].y - w[1].y;
             let s = w[0].size.max(w[1].size);
-            if d > 0.5 * s && d < 3.0 * s && (w[0].size / w[1].size - 1.0).abs() < 0.15 {
-                diffs.push(d / s);
+            let jitter = (w[0].size / w[1].size.max(0.1) - 1.0).abs();
+            if d > 0.3 * s && d < 3.0 * s {
+                size_jitters.push(jitter);
+                if jitter < 0.25 {
+                    diffs.push(d / s);
+                }
             }
         }
     }
     let leading_ratio = median(diffs).unwrap_or(1.2);
+    let noisy_ocr_sizes = size_jitters.len() >= 8 && median(size_jitters).is_some_and(|m| m > 0.06);
+    let (size_lo, size_hi) = if noisy_ocr_sizes {
+        (0.62, 1.62)
+    } else {
+        (0.87, 1.15)
+    };
 
     let mut out: Vec<Para> = Vec::new();
     for b in blocks {
@@ -237,16 +249,31 @@ pub(crate) fn paragraphs(blocks: Vec<Vec<Line>>) -> Vec<Para> {
                         let s = p.size.max(line.size);
                         let ratio = line.size / p.size;
                         let short = p.x1 < right - (3.0 * p.size).max(0.15 * (right - left));
-                        !(0.87..=1.15).contains(&ratio)
-                            || line.hint != p.hint
-                            || line.group != p.group
-                            || line.turned != p.turned
-                            || line.bold != p.bold
-                            || gap > leading_ratio * s * 1.35
-                            || gap < -0.3 * s
-                            || is_bullet_start(&line.text)
-                            || (line.x0 > left + 0.8 * line.size && p.x0 <= left + 0.5 * p.size)
-                            || (short && (ends_terminal(&p.text) || line.x0 < p.x0 - 0.8 * s))
+                        // 行尾断词连字符（如 `Ver-\nteilung`）紧接小写续行，不应误断为新段
+                        let hyphen_cont = (p.text.ends_with('-')
+                            || p.text.ends_with('\u{2010}')
+                            || p.text.ends_with('\u{AD}'))
+                            && starts_lower(&line.text)
+                            && (size_lo..=size_hi).contains(&ratio)
+                            && gap >= -0.3 * s
+                            && gap <= leading_ratio * s * 1.8
+                            && line.hint == p.hint
+                            && line.group == p.group
+                            && line.turned == p.turned;
+                        if hyphen_cont {
+                            false
+                        } else {
+                            !(size_lo..=size_hi).contains(&ratio)
+                                || line.hint != p.hint
+                                || line.group != p.group
+                                || line.turned != p.turned
+                                || line.bold != p.bold
+                                || gap > leading_ratio * s * 1.35
+                                || gap < -0.3 * s
+                                || is_bullet_start(&line.text)
+                                || (line.x0 > left + 0.8 * line.size && p.x0 <= left + 0.5 * p.size)
+                                || (short && (ends_terminal(&p.text) || line.x0 < p.x0 - 0.8 * s))
+                        }
                     }
                 };
             if brk {
@@ -399,9 +426,18 @@ pub(crate) fn render(pages: &[Vec<Para>], mode: Mode) -> (Vec<String>, String) {
         .map(|(k, _)| *k as f64 / 2.0)
         .unwrap_or(10.0);
     let body_bold = bold_chars * 2 > all_chars;
+    // OCR 叠加层每段字号都在大幅抖动（非原生排版）：用众数字号占比检测，若所有字号都很分散则抬高字号标题门槛
+    let body_bucket = (body * 2.0).round() as i64;
+    let near_body_chars: usize = hist
+        .iter()
+        .filter(|&(&k, _)| (k - body_bucket).abs() <= 1)
+        .map(|(_, &c)| c)
+        .sum();
+    let noisy_sizes = hist.len() >= 10 && all_chars >= 200 && near_body_chars * 3 < all_chars;
+    let heading_size_ratio = if noisy_sizes { 1.48 } else { 1.15 };
 
     let is_heading_size = |p: &Para| {
-        p.size >= body * 1.15
+        p.size >= body * heading_size_ratio
             && p.size - body >= 1.0
             && p.lines <= 4
             && p.text.chars().count() <= 200
@@ -577,27 +613,252 @@ pub(crate) fn render(pages: &[Vec<Para>], mode: Mode) -> (Vec<String>, String) {
     (page_md, doc)
 }
 
-/// 相邻两段公式只隔一个空格（公式跨了两个行片段）时合成一段：`$a \\leq$ $b$` → `$a \\leq b$`。
+/// 判断 `$...$` 内部片段是否像真实 LaTeX 数学公式（而非货币金额如 `$20,000 – $12,000`）。
+fn is_plausible_math_span(inner: &str, after_close: Option<char>) -> bool {
+    if inner.is_empty()
+        || inner.starts_with(char::is_whitespace)
+        || inner.ends_with(char::is_whitespace)
+    {
+        return false;
+    }
+    // 真实闭合 `$` 后不会紧贴数字或字母（货币 `$8,000 ($20,000` 的第二个 `$` 后紧跟数字）
+    if after_close.is_some_and(|c| c.is_ascii_alphanumeric()) {
+        return false;
+    }
+    // 排除明显跨越整段英文散文的伪配对（非 TeX 命令的 >= 4 字母普通英文词出现 >= 3 个）
+    let mut prose_words = 0usize;
+    for tok in inner.split_whitespace() {
+        if tok.starts_with('\\') {
+            continue;
+        }
+        let clean = tok.trim_matches(|c: char| !c.is_ascii_alphabetic());
+        if clean.len() >= 4 && clean.chars().all(|c| c.is_ascii_alphabetic()) {
+            prose_words += 1;
+            if prose_words >= 3 {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// 相邻两段公式只隔空格或短数学胶水（`=`, `+`, `-`, `,`, 数字、标准数学函数名）时合成一段：
+/// `$a \\leq$ $b$` → `$a \\leq b$`，`$S$ = $(P, L)$` → `$S = (P, L)$`，`$N \\geq$ 0` → `$N \\geq 0$`。
 pub(super) fn merge_math(text: &str) -> std::borrow::Cow<'_, str> {
-    if !text.contains("$ $") {
+    if !text.contains('$') {
         return text.into();
     }
-    let b = text.as_bytes();
-    let mut out = String::with_capacity(text.len());
-    let mut open = false;
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'$' {
-            if open && b.get(i + 1) == Some(&b' ') && b.get(i + 2) == Some(&b'$') {
-                out.push(' ');
-                i += 3;
+    // 按真实 `$...$` 公式配对切分为 (is_math, text)，跳过货币 `$`（如 `$20,000 – $12,000`）与 `$$`
+    let mut segs: Vec<(bool, String)> = Vec::new();
+    let push_plain = |segs: &mut Vec<(bool, String)>, s: &str| {
+        if s.is_empty() {
+            return;
+        }
+        if let Some((false, last)) = segs.last_mut() {
+            last.push_str(s);
+        } else {
+            segs.push((false, s.to_string()));
+        }
+    };
+    let bytes = text.as_bytes();
+    let mut pos = 0usize;
+    while pos < bytes.len() {
+        let Some(rel) = text[pos..].find('$') else {
+            push_plain(&mut segs, &text[pos..]);
+            break;
+        };
+        let start = pos + rel;
+        let escaped = start > 0 && bytes[start - 1] == b'\\';
+        if !escaped
+            && start + 1 < bytes.len()
+            && bytes[start + 1] != b'$'
+            && let Some(rel_end) = text[start + 1..].find('$')
+        {
+            let end = start + 1 + rel_end;
+            let inner = &text[start + 1..end];
+            let after = text[end + 1..].chars().next();
+            if is_plausible_math_span(inner, after) {
+                push_plain(&mut segs, &text[pos..start]);
+                segs.push((true, inner.to_string()));
+                pos = end + 1;
                 continue;
             }
-            open = !open;
         }
-        let ch = text[i..].chars().next().unwrap_or(' ');
-        out.push(ch);
-        i += ch.len_utf8();
+        // 不是真实公式定界符（如货币 `$20,000`、`\$` 或 `$$`）：原样保留该 `$` 并继续向后扫描
+        push_plain(&mut segs, &text[pos..=start]);
+        pos = start + 1;
+    }
+
+    if !segs.iter().any(|(m, _)| *m) {
+        return text.into();
+    }
+
+    let is_glue_between = |s: &str| -> Option<String> {
+        let t = s.trim();
+        if t.is_empty() {
+            return Some(String::new());
+        }
+        // 不把裸 `{` / `}` 并入公式，防止破坏 KaTeX 花括号配平
+        if t.len() <= 16
+            && t.chars()
+                .all(|c| c.is_ascii_digit() || " +-=<>()[]|/,.:;!'*−".contains(c))
+            && t.chars()
+                .any(|c| c.is_ascii_digit() || "+-=<>()[]|/:,".contains(c))
+        {
+            return Some(t.replace('−', "-"));
+        }
+        if crate::math::symbols::FUNCS.contains(&t) {
+            return Some(format!("\\{t}"));
+        }
+        None
+    };
+
+    let ends_with_op = |m: &str| -> bool {
+        let t = m.trim_end();
+        t.ends_with(['=', '+', '-', '<', '>', ':'])
+            || [
+                "\\leq",
+                "\\geq",
+                "\\neq",
+                "\\approx",
+                "\\equiv",
+                "\\simeq",
+                "\\sim",
+                "\\to",
+                "\\in",
+                "\\notin",
+                "\\subset",
+                "\\subseteq",
+                "\\times",
+                "\\cdot",
+                "\\pm",
+                "\\mp",
+                "\\coloneqq",
+            ]
+            .iter()
+            .any(|op| t.ends_with(op))
+    };
+
+    let mut changed = false;
+    // 1) 合并 `$A$ <glue> $B$` → `$A <glue> B$`
+    let mut merged: Vec<(bool, String)> = Vec::with_capacity(segs.len());
+    let mut i = 0;
+    while i < segs.len() {
+        if i + 2 < segs.len()
+            && segs[i].0
+            && !segs[i + 1].0
+            && segs[i + 2].0
+            && let Some(glue) = is_glue_between(&segs[i + 1].1)
+        {
+            changed = true;
+            let mut acc = segs[i].1.clone();
+            if !glue.is_empty() {
+                if !acc.ends_with(' ') && !glue.starts_with([',', ';', ')', ']']) {
+                    acc.push(' ');
+                }
+                acc.push_str(&glue);
+            }
+            if !acc.ends_with(' ') && !segs[i + 2].1.starts_with(' ') {
+                acc.push(' ');
+            }
+            acc.push_str(&segs[i + 2].1);
+            // 贪心向后继续合并链式分段 `$A$ = $B$ + $C$`
+            let mut k = i + 3;
+            while k + 1 < segs.len()
+                && !segs[k].0
+                && segs[k + 1].0
+                && let Some(g2) = is_glue_between(&segs[k].1)
+            {
+                if !g2.is_empty() {
+                    if !acc.ends_with(' ') && !g2.starts_with([',', ';', ')', ']']) {
+                        acc.push(' ');
+                    }
+                    acc.push_str(&g2);
+                }
+                if !acc.ends_with(' ') && !segs[k + 1].1.starts_with(' ') {
+                    acc.push(' ');
+                }
+                acc.push_str(&segs[k + 1].1);
+                k += 2;
+            }
+            merged.push((true, acc));
+            i = k;
+            continue;
+        }
+        merged.push(segs[i].clone());
+        i += 1;
+    }
+
+    // 2) 吸收公式末尾紧跟的孤立数字（如 `$N \geq$ 0` → `$N \geq 0$`）及公式前紧邻的孤立标准函数名（如 `log $|z|$` → `$\log |z|$`）
+    for idx in 0..merged.len() {
+        if merged[idx].0
+            && idx + 1 < merged.len()
+            && !merged[idx + 1].0
+            && ends_with_op(&merged[idx].1)
+        {
+            let next = merged[idx + 1].1.clone();
+            let trimmed = next.trim_start();
+            let tok_end = trimmed
+                .find(|c: char| !c.is_ascii_digit() && c != '.')
+                .unwrap_or(trimmed.len());
+            let tok = &trimmed[..tok_end];
+            if !tok.is_empty()
+                && tok.chars().any(|c| c.is_ascii_digit())
+                && !tok.ends_with('.')
+                && trimmed[tok_end..]
+                    .chars()
+                    .next()
+                    .is_none_or(|c| c.is_whitespace() || ",.;:)]}".contains(c))
+            {
+                changed = true;
+                if !merged[idx].1.ends_with(' ') {
+                    merged[idx].1.push(' ');
+                }
+                merged[idx].1.push_str(tok);
+                merged[idx + 1].1 = trimmed[tok_end..].to_string();
+            }
+        }
+        if merged[idx].0 && idx > 0 && !merged[idx - 1].0 {
+            let prev = merged[idx - 1].1.clone();
+            let trimmed_end = prev.trim_end();
+            if let Some(last_tok) = trimmed_end.rsplit_once(|c: char| c.is_whitespace()) {
+                let fn_name = last_tok.1;
+                if crate::math::symbols::FUNCS.contains(&fn_name)
+                    && matches!(
+                        merged[idx].1.trim_start().chars().next(),
+                        Some('(' | '|' | '[' | '{' | '_' | '^')
+                    )
+                {
+                    changed = true;
+                    let keep_len = trimmed_end.len() - fn_name.len();
+                    merged[idx - 1].1 = prev[..keep_len].to_string();
+                    merged[idx].1 = format!("\\{fn_name} {}", merged[idx].1.trim_start());
+                }
+            } else if crate::math::symbols::FUNCS.contains(&trimmed_end)
+                && matches!(
+                    merged[idx].1.trim_start().chars().next(),
+                    Some('(' | '|' | '[' | '{' | '_' | '^')
+                )
+            {
+                changed = true;
+                merged[idx - 1].1.clear();
+                merged[idx].1 = format!("\\{trimmed_end} {}", merged[idx].1.trim_start());
+            }
+        }
+    }
+
+    if !changed {
+        return text.into();
+    }
+    let mut out = String::with_capacity(text.len() + 8);
+    for (is_m, s) in merged {
+        if is_m {
+            out.push('$');
+            out.push_str(s.trim());
+            out.push('$');
+        } else {
+            out.push_str(&s);
+        }
     }
     out.into()
 }

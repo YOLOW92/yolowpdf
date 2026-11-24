@@ -45,7 +45,7 @@ PageSift 是一个抓取和正文抽取引擎。它的 PDF 分支一开始只有
 
 ```toml
 [dependencies]
-yolowpdf = "0.1.2"
+yolowpdf = "0.1.3"
 
 # 可选扫描页 OCR：
 yolowpdf-ocr = "0.1"

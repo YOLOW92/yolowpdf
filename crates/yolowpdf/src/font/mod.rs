@@ -73,6 +73,8 @@ pub(crate) enum MathKind {
     Script,
     /// 哥特体（EUFM）
     Fraktur,
+    /// 由 2D 几何公式引擎预构建好的完整 LaTeX 片段（`\frac`、`\sqrt`、`\sum_{...}^{...}` 等）
+    Prebuilt,
 }
 
 pub(crate) fn math_kind(base_font: &str) -> MathKind {
@@ -83,17 +85,29 @@ pub(crate) fn math_kind(base_font: &str) -> MathKind {
         .unwrap_or(base_font)
         .to_ascii_lowercase();
     let has = |keys: &[&str]| keys.iter().any(|k| name.contains(k));
-    if has(&["msbm", "bbold", "dsrom", "bbm", "doublestroke"]) {
+    if has(&[
+        "msbm",
+        "bbold",
+        "dsrom",
+        "bbm",
+        "doublestroke",
+        "mathbbol",
+        "txbby",
+    ]) {
         MathKind::Blackboard
-    } else if has(&["eufm", "eufb", "fraktur"]) {
+    } else if has(&["eufm", "eufb", "fraktur", "txfrak", "pxfrak"]) {
         MathKind::Fraktur
-    } else if has(&["rsfs", "eusm", "eusb", "mathscr"]) {
+    } else if has(&["rsfs", "eusm", "eusb", "mathscr", "boondox"]) {
         MathKind::Script
     } else if has(&[
         "cmex",
+        "lmex",
+        "euex",
         "mathextension",
         "txex",
         "pxex",
+        "ntxex",
+        "newtxex",
         "esint",
         "mathx",
         "largesymbols",
@@ -101,25 +115,40 @@ pub(crate) fn math_kind(base_font: &str) -> MathKind {
         MathKind::Extension
     } else if has(&[
         "cmmi",
+        "cmmib",
+        "lmmi",
         "mathitalic",
         "txmi",
         "pxmi",
         "ntxmi",
         "newtxmi",
         "mtmi",
+        "mt2mi",
         "zxmi",
+        "zplm",
+        "zptm",
+        "zeur",
+        "eurm",
+        "eurb",
+        "fourier-math-letters",
     ]) {
         MathKind::Italic
     } else if has(&[
         "cmsy",
         "cmbsy",
+        "lmsy",
         "mathsymbols",
         "txsy",
         "pxsy",
+        "ntxsy",
+        "newtxsy",
         "msam",
         "stmary",
         "mnsymbol",
+        "fdsymbol",
+        "wasy",
         "matha",
+        "mathb",
         "math",
     ]) || name == "symbol"
         || name.starts_with("symbolmt")
@@ -127,6 +156,57 @@ pub(crate) fn math_kind(base_font: &str) -> MathKind {
         MathKind::Symbol
     } else {
         MathKind::Text
+    }
+}
+
+/// 修正 TeX OML 数学斜体字体（CMMI/LMMI）中历史遗留的 Adobe AGL `phi`/`varphi` 反转问题：
+/// Knuth OML 编码中，码位 0x1E（dvips 偏移 0xC1）恒为直体 `\phi`（U+03D5 `ϕ`），
+/// 码位 0x27（0xCA）恒为卷体 `\varphi`（U+03C6 `φ`），码位 0x0F（0xB2）恒为 `\epsilon`（U+03F5 `ϵ`）。
+/// 旧版 pdfTeX/AGL 生成的 ToUnicode 会把 0x1E 错映成 U+03C6、0x27 错映成 U+03D5，导致全篇 `\phi` 与 `\varphi` 颠倒。
+fn fix_cmmi_oml(base_font: &str, font: &mut Font) {
+    let name = base_font
+        .rsplit('+')
+        .next()
+        .unwrap_or(base_font)
+        .to_ascii_lowercase();
+    if !(name.starts_with("cmmi") || name.starts_with("cmmib") || name.starts_with("lmmi")) {
+        return;
+    }
+    if let Some(cm) = font.to_unicode.as_mut() {
+        let swapped = cm.unicode(0x1E).as_deref() == Some("φ")
+            || cm.unicode(0x27).as_deref() == Some("ϕ")
+            || cm.unicode(0xC1).as_deref() == Some("φ")
+            || cm.unicode(0xCA).as_deref() == Some("ϕ");
+        if swapped {
+            for c in [0x1Eu32, 0xC1] {
+                if cm.unicode(c).as_deref() == Some("φ") {
+                    cm.override_unicode(c, Short::from('ϕ'));
+                }
+            }
+            for c in [0x27u32, 0xCA] {
+                if cm.unicode(c).as_deref() == Some("ϕ") {
+                    cm.override_unicode(c, Short::from('φ'));
+                }
+            }
+        }
+        // 某些旧 CMMI ToUnicode 也会把 0x0F（\epsilon）映成 U+03B5（ε），而把 0x22（\varepsilon）也映成 U+03B5
+        if cm.unicode(0x0F).as_deref() == Some("ε") && cm.unicode(0x22).as_deref() == Some("ε") {
+            cm.override_unicode(0x0F, Short::from('ϵ'));
+        }
+    }
+    // 无 ToUnicode 时，内建字形名 `/phi`（0x1E）和 `/phi1`（0x27）在 OML 中分别对应 ϕ 和 φ
+    if font.simple_map.len() >= 256 {
+        if font.simple_map[0x1E].as_deref() == Some("φ") {
+            font.simple_map[0x1E] = Some(Short::from('ϕ'));
+        }
+        if font.simple_map[0x27].as_deref() == Some("ϕ") {
+            font.simple_map[0x27] = Some(Short::from('φ'));
+        }
+        if font.simple_map[0x0F].as_deref() == Some("ε")
+            && font.simple_map[0x22].as_deref() == Some("ε")
+        {
+            font.simple_map[0x0F] = Some(Short::from('ϵ'));
+        }
     }
 }
 
@@ -280,6 +360,7 @@ impl Font {
                 }
             }
         }
+        fix_cmmi_oml(&base_font, &mut font);
         font
     }
 

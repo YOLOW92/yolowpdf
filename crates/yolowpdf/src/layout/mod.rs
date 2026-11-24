@@ -4,10 +4,12 @@ use std::collections::HashMap;
 
 use crate::interp::Glyph;
 
+mod columns;
 mod furniture;
 mod headings;
 mod render;
 
+pub(crate) use columns::{blocks, gutters_of};
 pub(crate) use furniture::remove_furniture;
 #[cfg(test)]
 use furniture::{furniture_key, is_page_number};
@@ -136,8 +138,9 @@ pub(crate) fn fragments(
             .then(glyphs[a].x.total_cmp(&glyphs[b].x))
     });
 
-    // 先严格按基线聚成行，再把上下标这种小字号短行挂到相邻的大字号行上。
-    // 不能用宽松容差一次聚完：大号标题会把旁边一栏的上下两行串在一起。
+    // 先严格按基线聚成行，再处理首字下沉（Drop Cap）并把上下标小字号短行挂到相邻大字号行上。
+    // 注意：行代表字号用众数/中位数而不是 max，防止单个超大首字下沉或页眉 Logo 拉大整行字号、
+    // 从而把相邻两行正文错误合并成乱序交错行（例如 `i4FRJIADNAUYARY`）。
     struct Row {
         idx: Vec<usize>,
         y: f64,
@@ -149,11 +152,18 @@ pub(crate) fn fragments(
     for i in order {
         let g = &glyphs[i];
         match rows.last_mut() {
-            Some(r) if (r.y - g.y).abs() <= 0.15 * r.size.max(g.size) => {
+            Some(r)
+                if (r.y - g.y).abs() <= 0.15 * r.size.min(g.size).max(1.0)
+                    || ((r.y - g.y).abs() <= 0.15 * r.size.max(g.size)
+                        && (r.size / g.size.max(0.1)).max(g.size / r.size.max(0.1)) <= 1.6) =>
+            {
                 r.idx.push(i);
-                r.size = r.size.max(g.size);
                 r.x0 = r.x0.min(g.x);
-                r.x1 = r.x1.max(g.x_end);
+                r.x1 = r.x1.max(g.x_end.max(g.x));
+                // 更新行字号为当前行中位数近似（不让单个超大首字污染整行）
+                if r.idx.len() <= 3 {
+                    r.size = r.size.max(g.size);
+                }
             }
             _ => rows.push(Row {
                 idx: vec![i],
@@ -164,11 +174,134 @@ pub(crate) fn fragments(
             }),
         }
     }
+    // 按字符数加权中位数重新定每行的真实字号（消除单个超大字形对行字号的污染）
+    for r in &mut rows {
+        if r.idx.len() >= 2 {
+            let mut szs: Vec<f64> = r.idx.iter().map(|&k| glyphs[k].size).collect();
+            szs.sort_by(f64::total_cmp);
+            r.size = szs[szs.len() / 2];
+        }
+    }
+
+    // 首字下沉（Drop Cap）识别与归位：孤立单个大号大写字母位于 2–4 行缩进正文左侧时，
+    // 记录其归属到最顶上那一行缩进正文的开头，并从原位置移除。
+    let mut drop_cap_prefix: HashMap<usize, (usize, bool)> = HashMap::new();
+    let mut body_sizes: Vec<f64> = rows
+        .iter()
+        .filter(|r| r.idx.len() >= 4)
+        .map(|r| r.size)
+        .collect();
+    body_sizes.sort_by(f64::total_cmp);
+    let page_body = body_sizes
+        .get(body_sizes.len() / 2)
+        .copied()
+        .unwrap_or(10.0);
     for i in 0..rows.len() {
-        let r = &rows[i];
-        if r.idx.is_empty() {
+        if rows[i].idx.len() != 1 {
             continue;
         }
+        let gi = rows[i].idx[0];
+        let dg = &glyphs[gi];
+        let dt = dg.text.trim();
+        let mut dcs = dt.chars();
+        let (Some(dc), None) = (dcs.next(), dcs.next()) else {
+            continue;
+        };
+        if !dc.is_uppercase()
+            || dg.math != crate::font::MathKind::Text
+            || dg.size < 1.75 * page_body
+        {
+            continue;
+        }
+        let d_x1 = dg.x_end.max(dg.x + 0.5 * dg.size);
+        let d_top = dg.y + 0.78 * dg.size;
+        let d_bot = dg.y - 0.15 * dg.size;
+        // 找右侧紧邻且纵向落在首字下沉高度范围内的 2–4 行正文
+        let mut beside: Vec<usize> = Vec::new();
+        for (j, h) in rows.iter().enumerate() {
+            if j == i || h.idx.len() < 3 || h.size > 0.65 * dg.size {
+                continue;
+            }
+            let h_mid = h.y + 0.35 * h.size;
+            if h_mid <= d_top + 0.6 * h.size
+                && h_mid >= d_bot - 0.5 * h.size
+                && h.x0 >= d_x1 - 0.45 * h.size
+                && h.x0 <= d_x1 + 2.2 * h.size
+            {
+                beside.push(j);
+            }
+        }
+        if beside.len() >= 2 && beside.len() <= 5 {
+            // 取最靠上的一行作为宿主行
+            if let Some(&top_row) = beside
+                .iter()
+                .max_by(|&&a, &&b| rows[a].y.total_cmp(&rows[b].y))
+            {
+                // 判断是否需要在首字下沉与宿主行首词之间加空格（如 `A sweet` / `I have` vs `Do you` / `F’dan`）
+                let mut host_ids = rows[top_row].idx.clone();
+                host_ids.sort_by(|&a, &b| glyphs[a].x.total_cmp(&glyphs[b].x));
+                let first_text: String = host_ids
+                    .iter()
+                    .take(8)
+                    .map(|&k| glyphs[k].text.as_str())
+                    .collect();
+                let first_word = first_text
+                    .trim_start()
+                    .split(|c: char| !c.is_alphabetic())
+                    .next()
+                    .unwrap_or("")
+                    .to_lowercase();
+                let standalone_article = matches!(dc, 'A' | 'I')
+                    && matches!(
+                        first_word.as_str(),
+                        "sweet"
+                            | "new"
+                            | "good"
+                            | "great"
+                            | "small"
+                            | "long"
+                            | "short"
+                            | "few"
+                            | "man"
+                            | "woman"
+                            | "day"
+                            | "year"
+                            | "time"
+                            | "way"
+                            | "have"
+                            | "had"
+                            | "was"
+                            | "am"
+                            | "will"
+                            | "would"
+                            | "can"
+                            | "could"
+                            | "did"
+                            | "do"
+                            | "don"
+                            | "know"
+                            | "think"
+                            | "want"
+                            | "need"
+                    );
+                if let std::collections::hash_map::Entry::Vacant(e) = drop_cap_prefix.entry(top_row)
+                {
+                    e.insert((gi, standalone_article));
+                    rows[i].idx.clear();
+                }
+            }
+        }
+    }
+
+    for i in 0..rows.len() {
+        let r = &rows[i];
+        if r.idx.is_empty() || drop_cap_prefix.contains_key(&i) {
+            continue;
+        }
+        let r_has_math = r
+            .idx
+            .iter()
+            .any(|&k| glyphs[k].math != crate::font::MathKind::Text);
         let mut best: Option<(usize, f64)> = None;
         for (j, h) in rows
             .iter()
@@ -176,15 +309,45 @@ pub(crate) fn fragments(
             .take((i + 9).min(rows.len()))
             .skip(i.saturating_sub(8))
         {
+            if j == i || h.idx.is_empty() {
+                continue;
+            }
             let dy = (h.y - r.y).abs();
-            if j != i
-                && h.size >= r.size * 1.1
-                && h.idx.len() >= r.idx.len() * 2
-                && dy < 0.6 * h.size
-                && r.x0 <= h.x1 + 0.5 * h.size
-                && r.x1 >= h.x0 - 0.5 * h.size
+            let h_has_math = h
+                .idx
+                .iter()
+                .any(|&k| glyphs[k].math != crate::font::MathKind::Text);
+            let count_ok = h.idx.len() >= r.idx.len() * 2
+                || ((r_has_math || h_has_math) && r.size <= h.size * 0.86 && r.idx.len() <= 24);
+            let dy_lim = if h_has_math || r_has_math {
+                0.75 * h.size
+            } else {
+                0.6 * h.size
+            };
+            if h.size >= r.size * 1.1
+                && count_ok
+                && dy < dy_lim
+                && r.x0 <= h.x1 + 0.6 * h.size
+                && r.x1 >= h.x0 - 0.6 * h.size
                 && best.is_none_or(|(_, d)| dy < d)
             {
+                // 水平重叠守护：如果 r 中有 >= 2 个字形横向直接叠在 h 的同字号字形正上方/正下方
+                // （如堆叠的两行小字 `FRIDAY` 压在 `4 JANUARY 2019` 上方），绝不是上下标，禁止合并！
+                let overlaps = r
+                    .idx
+                    .iter()
+                    .filter(|&&ri| {
+                        let rg = &glyphs[ri];
+                        let rcx = 0.5 * (rg.x + rg.x_end.max(rg.x));
+                        h.idx.iter().any(|&hi| {
+                            let hg = &glyphs[hi];
+                            rcx >= hg.x && rcx <= hg.x_end.max(hg.x)
+                        })
+                    })
+                    .count();
+                if !r_has_math && !h_has_math && overlaps >= 2 {
+                    continue;
+                }
                 best = Some((j, dy));
             }
         }
@@ -193,15 +356,15 @@ pub(crate) fn fragments(
             rows[j].idx.extend(moved);
         }
     }
-    let clusters: Vec<Vec<usize>> = rows
-        .into_iter()
-        .map(|r| r.idx)
-        .filter(|c| !c.is_empty())
-        .collect();
-
     let mut out = Vec::new();
-    for mut c in clusters {
+    for (row_idx, row) in rows.into_iter().enumerate() {
+        let mut c = row.idx;
+        if c.is_empty() {
+            continue;
+        }
         c.sort_by(|&a, &b| glyphs[a].x.total_cmp(&glyphs[b].x));
+        let prefix = drop_cap_prefix.get(&row_idx).copied();
+        let mut first_frag = true;
         let mut cur: Vec<&Glyph> = Vec::new();
         let mut prev_end = f64::NEG_INFINITY;
         for &i in &c {
@@ -215,10 +378,27 @@ pub(crate) fn fragments(
                     continue;
                 }
                 let gap = g.x - prev_end;
-                if gap > SPLIT_GAP * g.size.max(p.size)
+                let is_tex_math = |m: crate::font::MathKind| {
+                    !matches!(
+                        m,
+                        crate::font::MathKind::Text | crate::font::MathKind::Symbol
+                    )
+                };
+                let split_k = if is_tex_math(g.math) || is_tex_math(p.math) {
+                    0.90
+                } else {
+                    SPLIT_GAP
+                };
+                if gap > split_k * g.size.max(p.size)
                     || (heading_of.is_some() && group(p) != group(g))
                 {
-                    out.extend(make_line(&cur));
+                    if let Some(mut line) = make_line(&cur) {
+                        if first_frag && let Some((di, space)) = prefix {
+                            prepend_drop_cap(&mut line, &glyphs[di], space);
+                            first_frag = false;
+                        }
+                        out.push(line);
+                    }
                     cur.clear();
                     prev_end = f64::NEG_INFINITY;
                 }
@@ -226,12 +406,71 @@ pub(crate) fn fragments(
             prev_end = prev_end.max(g.x_end).max(g.x);
             cur.push(g);
         }
-        out.extend(make_line(&cur));
+        if let Some(mut line) = make_line(&cur) {
+            if first_frag && let Some((di, space)) = prefix {
+                prepend_drop_cap(&mut line, &glyphs[di], space);
+            }
+            out.push(line);
+        }
     }
     out
 }
 
+fn prepend_drop_cap(line: &mut Line, dg: &Glyph, add_space: bool) {
+    let ch = dg.text.trim();
+    if ch.is_empty() {
+        return;
+    }
+    let sep = if add_space { " " } else { "" };
+    line.text = format!("{ch}{sep}{}", line.text);
+    line.x0 = line.x0.min(dg.x);
+}
+
+/// 基于 O'Gorman (1993) Docstrum 与稳健分位数的自适应词间距阈值估计：
+/// - 数学行保持标准 `0.15*size`（避免把 TeX 斜体修正如 `P(z)` 误拆成 `P (z)`）；
+/// - 仅在检测到一致的宽字距（Tracking）标题（单字对 15% 分位 >= 0.06*size）时抬升阈值，
+///   避免把字母拆散，同时不在 OCR 抖动行上过度抬升导致词粘连。
+fn adaptive_space_gap(glyphs: &[&Glyph]) -> f64 {
+    if glyphs.iter().any(|g| g.math != crate::font::MathKind::Text) {
+        return SPACE_GAP;
+    }
+    let mut single_gaps: Vec<f64> = Vec::new();
+    let mut prev: Option<&Glyph> = None;
+    let mut prev_end = f64::NEG_INFINITY;
+    for &g in glyphs {
+        let t = g.text.trim();
+        if t.is_empty() {
+            prev = None;
+            continue;
+        }
+        if let Some(p) = prev {
+            let s = g.size.max(p.size);
+            if s > 0.5 && p.text.trim().chars().count() == 1 && t.chars().count() == 1 {
+                let p_cjk = p.text.chars().any(is_cjk);
+                let g_cjk = t.chars().any(is_cjk);
+                if !p_cjk && !g_cjk {
+                    let r = (g.x - prev_end) / s;
+                    if (-0.05..0.40).contains(&r) {
+                        single_gaps.push(r);
+                    }
+                }
+            }
+        }
+        prev_end = prev_end.max(g.x_end).max(g.x);
+        prev = Some(g);
+    }
+    if single_gaps.len() >= 10 {
+        single_gaps.sort_by(f64::total_cmp);
+        let p15 = single_gaps[(single_gaps.len() * 15) / 100];
+        if p15 >= 0.06 {
+            return (p15 + 0.10).clamp(SPACE_GAP, 0.23);
+        }
+    }
+    SPACE_GAP
+}
+
 fn make_line(glyphs: &[&Glyph]) -> Option<Line> {
+    let latin_space_gap = adaptive_space_gap(glyphs);
     // 按空格切词；词内文字和原来逐字拼接一致
     let mut words: Vec<Vec<crate::math::Item>> = Vec::new();
     let mut pending_space = false;
@@ -248,8 +487,12 @@ fn make_line(glyphs: &[&Glyph]) -> Option<Line> {
     let mut t = String::new();
     for g in glyphs {
         t.clear();
-        for c in g.text.chars() {
-            normalize_char(c, &mut t);
+        if g.math == crate::font::MathKind::Prebuilt {
+            t.push_str(&g.text);
+        } else {
+            for c in g.text.chars() {
+                normalize_char(c, &mut t);
+            }
         }
         if t.trim().is_empty() {
             if !t.is_empty() {
@@ -261,7 +504,21 @@ fn make_line(glyphs: &[&Glyph]) -> Option<Line> {
         if let Some(p) = prev {
             let gap = g.x - prev_end;
             let cjk = last_char.is_some_and(is_cjk) && t.chars().next().is_some_and(is_cjk);
-            let limit = if cjk { CJK_SPACE_GAP } else { SPACE_GAP };
+            // 紧凑多字符 TJ 词块之间（如报纸窄栏 `-135` 负调距）兼容到 0.125*size
+            let tight_word_pair = !cjk
+                && p.math == crate::font::MathKind::Text
+                && g.math == crate::font::MathKind::Text
+                && p.text.trim().chars().count() >= 2
+                && t.chars().count() >= 2
+                && last_char.is_some_and(char::is_alphanumeric)
+                && t.chars().next().is_some_and(char::is_alphanumeric);
+            let limit = if cjk {
+                CJK_SPACE_GAP
+            } else if tight_word_pair {
+                latin_space_gap.min(0.125)
+            } else {
+                latin_space_gap
+            };
             if pending_space || gap > limit * g.size.max(p.size) {
                 new_word = true;
             }
@@ -348,225 +605,6 @@ fn make_line(glyphs: &[&Glyph]) -> Option<Line> {
     })
 }
 
-/// 找分栏的栏间空白，返回每条空白的 [左, 右]。
-fn gutters(frags: &[Line]) -> Vec<(f64, f64)> {
-    gutters_of(&frags.iter().collect::<Vec<_>>())
-}
-
-/// 同 `gutters`，输入是行的引用（表格检测只看还没归表格的片段）。
-pub(crate) fn gutters_of(frags: &[&Line]) -> Vec<(f64, f64)> {
-    let left = frags.iter().map(|f| f.x0).fold(f64::INFINITY, f64::min);
-    let right = frags.iter().map(|f| f.x1).fold(f64::NEG_INFINITY, f64::max);
-    let width = right - left;
-    if width.is_nan() || width <= 1.0 || frags.len() < 6 {
-        return Vec::new();
-    }
-    // 原样输出的块（表格、图内文字）不当候选
-    let cands: Vec<&Line> = frags
-        .iter()
-        .copied()
-        .filter(|f| f.x1 - f.x0 < 0.55 * width && !f.raw)
-        .collect();
-    if cands.len() < 6 {
-        return Vec::new();
-    }
-    let mut sizes: Vec<f64> = cands.iter().map(|f| f.size).collect();
-    sizes.sort_by(f64::total_cmp);
-    let med = sizes[sizes.len() / 2];
-    let min_gap = (0.55 * med).max(3.5);
-
-    // 1pt 精度的覆盖直方图，宽页面按比例缩放
-    let bins = (width.ceil() as usize).clamp(1, 4000);
-    let scale = bins as f64 / width;
-    let mut cover = vec![0usize; bins + 1];
-    for f in &cands {
-        let a = (((f.x0 - left) * scale).floor().max(0.0) as usize).min(bins);
-        let b = (((f.x1 - left) * scale).ceil().max(0.0) as usize).min(bins);
-        for c in &mut cover[a..b.max(a)] {
-            *c += 1;
-        }
-    }
-    let tol = (cands.len() / 15).max(1);
-    let out = scan(&cands, &cover, tol, left, scale, min_gap, None);
-    if !out.is_empty() {
-        return out;
-    }
-    // 一条也没找到时再放宽：只看两栏正文（正文字号的行）并排的那段高度，那里没有行跨过空白就算栏间空白
-    // （图上方跨栏的小标题、图例不在这段高度里）
-    scan(
-        &cands,
-        &cover,
-        (cands.len() / 4).max(1),
-        left,
-        scale,
-        min_gap,
-        Some((tol, med)),
-    )
-}
-
-/// 在覆盖直方图里找不超过 `tol` 的空白段。`band_tol`（容差, 正文字号）给出时，再核对两边正文字号的行
-/// 并排的高度范围里，跨过空白的行不超过容差。
-fn scan(
-    cands: &[&Line],
-    cover: &[usize],
-    tol: usize,
-    left: f64,
-    scale: f64,
-    min_gap: f64,
-    band_tol: Option<(usize, f64)>,
-) -> Vec<(f64, f64)> {
-    let bins = cover.len() - 1;
-    let mut out = Vec::new();
-    let mut start: Option<usize> = None;
-    for (i, &c) in cover.iter().enumerate() {
-        let empty = i < bins && c <= tol;
-        match (empty, start) {
-            (true, None) => start = Some(i),
-            (false, Some(s)) => {
-                start = None;
-                let (g0, g1) = (left + s as f64 / scale, left + i as f64 / scale);
-                if s == 0 || i >= bins || g1 - g0 < min_gap {
-                    continue;
-                }
-                let lhs: Vec<&&Line> = cands.iter().filter(|f| f.x1 <= g0 + 0.5).collect();
-                let rhs: Vec<&&Line> = cands.iter().filter(|f| f.x0 >= g1 - 0.5).collect();
-                let need = (cands.len() / 10).max(3);
-                if lhs.len() < need || rhs.len() < need {
-                    continue;
-                }
-                if let Some((band_tol, med)) = band_tol {
-                    // 两边都得是正文栏：正文字号的行宽中位数不小于全宽的四分之一（不是编号列、作者名格子）
-                    let full = bins as f64 / scale;
-                    let wide = |v: &[&&Line]| {
-                        let mut w: Vec<f64> = v
-                            .iter()
-                            .filter(|f| (f.size - med).abs() < 0.5)
-                            .map(|f| f.x1 - f.x0)
-                            .collect();
-                        w.sort_by(f64::total_cmp);
-                        w.get(w.len() / 2).is_some_and(|&m| m >= 0.25 * full)
-                    };
-                    if !wide(&lhs) || !wide(&rhs) {
-                        continue;
-                    }
-                    let span = |v: &[&&Line]| {
-                        v.iter()
-                            .filter(|f| (f.size - med).abs() < 0.5)
-                            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), f| {
-                                (lo.min(f.y), hi.max(f.y))
-                            })
-                    };
-                    let ((l0, l1), (r0, r1)) = (span(&lhs), span(&rhs));
-                    let (lo, hi) = (l0.max(r0), l1.min(r1));
-                    let crossing = cands
-                        .iter()
-                        .filter(|f| f.x0 < g0 - 0.5 && f.x1 > g1 + 0.5 && f.y >= lo && f.y <= hi)
-                        .count();
-                    if lo >= hi || crossing > band_tol {
-                        continue;
-                    }
-                }
-                out.push((g0, g1));
-            }
-            _ => {}
-        }
-    }
-    out
-}
-
-/// 按阅读顺序把片段分成块：每块是同一栏里连续的行，跨栏的内容单独成块。
-pub(crate) fn blocks(mut frags: Vec<Line>) -> Vec<Vec<Line>> {
-    if frags.is_empty() {
-        return Vec::new();
-    }
-    let gs = gutters(&frags);
-    frags.sort_by(|a, b| b.y.total_cmp(&a.y).then(a.x0.total_cmp(&b.x0)));
-    let column_of = |f: &Line| -> Option<usize> {
-        let mut col = 0;
-        for (i, &(g0, g1)) in gs.iter().enumerate() {
-            let mid = (g0 + g1) / 2.0;
-            if f.x0 < g0 - 8.0 && f.x1 > g1 + 8.0 {
-                return None;
-            }
-            if (f.x0 + f.x1) / 2.0 >= mid {
-                col = i + 1;
-            }
-        }
-        Some(col)
-    };
-
-    let mut out = Vec::new();
-    let mut band: Vec<Vec<Line>> = vec![Vec::new(); gs.len() + 1];
-    let mut spanning: Vec<Line> = Vec::new();
-    for f in frags {
-        match column_of(&f) {
-            Some(c) => {
-                if !spanning.is_empty() {
-                    out.push(merge_rows(std::mem::take(&mut spanning)));
-                }
-                band[c].push(f);
-            }
-            None => {
-                for col in band.iter_mut() {
-                    if !col.is_empty() {
-                        out.push(merge_rows(std::mem::take(col)));
-                    }
-                }
-                spanning.push(f);
-            }
-        }
-    }
-    if !spanning.is_empty() {
-        out.push(merge_rows(spanning));
-    }
-    for col in band {
-        if !col.is_empty() {
-            out.push(merge_rows(col));
-        }
-    }
-    out
-}
-
-/// 把同一栏里基线相同的片段合成一行（片段已按 y 降序排好）。
-fn merge_rows(frags: Vec<Line>) -> Vec<Line> {
-    let mut rows: Vec<Vec<Line>> = Vec::new();
-    for f in frags {
-        match rows.last_mut() {
-            Some(r)
-                if !f.raw
-                    && !r[0].raw
-                    && r[0].group == f.group
-                    && (r[0].y - f.y).abs() < 0.35 * r[0].size.max(f.size) =>
-            {
-                r.push(f)
-            }
-            _ => rows.push(vec![f]),
-        }
-    }
-    rows.into_iter()
-        .filter_map(|mut r| {
-            r.sort_by(|a, b| a.x0.total_cmp(&b.x0));
-            let mut it = r.into_iter();
-            let mut line = it.next()?;
-            for f in it {
-                let cjk = line.text.chars().last().is_some_and(is_cjk)
-                    && f.text.chars().next().is_some_and(is_cjk)
-                    && f.x0 - line.x1 < CJK_SPACE_GAP * f.size;
-                if !cjk {
-                    line.text.push(' ');
-                }
-                line.text.push_str(&f.text);
-                line.x1 = line.x1.max(f.x1);
-                if f.text.chars().count() > line.text.chars().count() / 2 {
-                    line.size = line.size.max(f.size);
-                }
-                line.bold &= f.bold;
-            }
-            Some(line)
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -577,6 +615,21 @@ mod tests {
             merge_math("with $0 \\leq k \\leq$ $2^{N}$. Then $a$ and $b$"),
             "with $0 \\leq k \\leq 2^{N}$. Then $a$ and $b$"
         );
+        assert_eq!(
+            merge_math("$S$ = $(P, L)$ and $N \\geq$ 0"),
+            "$S = (P, L)$ and $N \\geq 0$"
+        );
+        assert_eq!(merge_math("log $|z|$"), "$\\log |z|$");
+        // 货币金额绝不能被当作公式合并或破坏空格
+        let currency = "Example. Income of $164,700. Deductions total $20,000. Gifts of $12,000. The other $8,000 ($20,000 – $12,000) of deductions.";
+        assert_eq!(merge_math(currency), currency);
+        // 货币与真实公式混排时仅合并真实公式
+        assert_eq!(
+            merge_math("Cost is $5 and $x$ + $y$ = $z$"),
+            "Cost is $5 and $x + y = z$"
+        );
+        // 裸花括号绝不并入公式破坏配平
+        assert_eq!(merge_math("$a$ { $b$"), "$a$ { $b$");
     }
 
     #[test]

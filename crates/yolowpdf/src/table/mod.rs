@@ -91,6 +91,16 @@ pub(crate) fn extract(
     let mut tables: Vec<Table> = Vec::new();
     if !v.is_empty() {
         for cells in lattice(&h, &v) {
+            let x0 = cells.iter().map(|c| c.0).fold(f64::INFINITY, f64::min);
+            let x1 = cells.iter().map(|c| c.2).fold(f64::NEG_INFINITY, f64::max);
+            let top = cells.iter().map(|c| c.1).fold(f64::NEG_INFINITY, f64::max);
+            let bottom = cells.iter().map(|c| c.3).fold(f64::INFINITY, f64::min);
+            // 覆盖整页背景/页框（仅含 1–4 个大色块如底色+侧栏）不是表格边框，禁止吞并整页正文与内表
+            let full_page_frame =
+                x1 - x0 >= 0.92 * page_width && top - bottom >= 0.92 * page_height;
+            if full_page_frame && cells.len() <= 4 {
+                continue;
+            }
             if cells.len() >= 2 {
                 let mut trial = used.clone();
                 if let Some((t, crowded, horiz)) = grid(&cells, frags, &mut trial)
@@ -116,11 +126,8 @@ pub(crate) fn extract(
                     continue;
                 }
             }
-            let x0 = cells.iter().map(|c| c.0).fold(f64::INFINITY, f64::min);
-            let x1 = cells.iter().map(|c| c.2).fold(f64::NEG_INFINITY, f64::max);
-            let top = cells.iter().map(|c| c.1).fold(f64::NEG_INFINITY, f64::max);
-            let bottom = cells.iter().map(|c| c.3).fold(f64::INFINITY, f64::min);
             if x1 - x0 >= 0.2 * page_width
+                && !full_page_frame
                 && !box_on_figure(figures, x0, x1, top, bottom)
                 && let Some((t, mine)) = region(frags, &used, x0, x1, top, bottom)
                     .filter(|(t, mine)| t.rows.len() >= 3 && !on_figure(figures, frags, mine))
@@ -150,7 +157,11 @@ pub(crate) fn extract(
         &mut used,
         page_width,
         &mut |t: &Table, m: &[usize]| {
-            !box_on_figure(figures, t.x0, t.x1, t.top, t.bottom) && !on_figure(figures, frags, m)
+            let full_page =
+                t.x1 - t.x0 >= 0.92 * page_width && t.top - t.bottom >= 0.92 * page_height;
+            !full_page
+                && !box_on_figure(figures, t.x0, t.x1, t.top, t.bottom)
+                && !on_figure(figures, frags, m)
         },
     ));
     // 无框线表格在分栏之后找：跨过栏间空白、两边像并排两栏文字的候选（两栏列表、正文和旁边的信息框、
@@ -405,5 +416,36 @@ mod tests {
                 && borderless::page_number("3 / 10")
         );
         assert!(!borderless::page_number("Q3") && !borderless::page_number("$448"));
+    }
+
+    #[test]
+    fn full_page_background_frame_does_not_swallow_page() {
+        // 100% page background box + left sidebar sharing corner (0, 0)
+        let rules = vec![
+            hrule(0.0, 558.0, 774.0),
+            hrule(0.0, 558.0, 0.0),
+            vrule(0.0, 0.0, 774.0),
+            vrule(558.0, 0.0, 774.0),
+            hrule(0.0, 140.0, 700.0),
+            vrule(140.0, 0.0, 700.0),
+        ];
+        let mut frags = vec![
+            frag("Page Title", 180.0, 740.0),
+            frag("1,473", 20.0, 620.0),
+            frag("White", 180.0, 620.0),
+            frag("76%", 320.0, 620.0),
+            frag("Degrees", 20.0, 580.0),
+            frag("Black", 180.0, 580.0),
+            frag("14%", 320.0, 580.0),
+            frag("Awarded", 20.0, 540.0),
+            frag("Hispanic", 180.0, 540.0),
+            frag("4%", 320.0, 540.0),
+        ];
+        let tables = extract(&rules, &mut frags, &[], 558.0, 774.0);
+        // Full-page frame must not swallow the Page Title into a giant full-page table
+        assert!(
+            tables.iter().all(|t| t.top - t.bottom < 0.92 * 774.0),
+            "full-page frame must not swallow page: {tables:?}"
+        );
     }
 }

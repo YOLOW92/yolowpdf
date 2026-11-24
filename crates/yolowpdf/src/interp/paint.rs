@@ -46,12 +46,21 @@ impl Interp<'_> {
     pub(super) fn color(
         &self,
         op: &[u8],
-        args: &[Operand],
+        args: &[Operand<'_>],
         resources: Option<&Dictionary>,
         fill: &mut Paint,
         stroke: &mut Paint,
     ) -> bool {
-        let nums: Vec<f64> = args.iter().filter_map(Operand::num).collect();
+        let mut nums = [0.0f64; 4];
+        let mut nlen = 0usize;
+        for a in args {
+            if let Some(v) = a.num() {
+                if nlen < nums.len() {
+                    nums[nlen] = v;
+                }
+                nlen += 1;
+            }
+        }
         let (target, space) = match op {
             b"g" => (fill, Some(Space::Gray)),
             b"G" => (stroke, Some(Space::Gray)),
@@ -79,10 +88,8 @@ impl Interp<'_> {
         let space = space.unwrap_or(target.space);
         // 图案（最后一个操作数是名字）不当白色
         let pattern = matches!(args.last(), Some(Operand::Name(_)));
-        *target = Paint {
-            space,
-            white: !pattern && white_of(space, &nums),
-        };
+        let white = !pattern && nlen <= nums.len() && white_of(space, &nums[..nlen]);
+        *target = Paint { space, white };
         true
     }
 

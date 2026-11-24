@@ -359,8 +359,9 @@ pub mod fuzzing {
     /// 返回操作符个数。
     pub fn lex(data: &[u8]) -> usize {
         let mut lx = lexer::Lexer::new(data);
+        let mut op = lexer::OpBuf::default();
         let mut n = 0;
-        while lx.next_op().is_some() {
+        while lx.next_op_into(&mut op) {
             n += 1;
         }
         n

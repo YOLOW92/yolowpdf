@@ -4,7 +4,7 @@ use crate::short::Short;
 use std::collections::HashMap;
 
 use crate::encoding::glyph_to_unicode;
-use crate::lexer::{Lexer, Operand};
+use crate::lexer::{Lexer, OpBuf, Operand};
 
 /// 展开 bfrange/cidrange 的总条目上限，超出的区间按区间保存。
 const MAX_EXPANDED: usize = 200_000;
@@ -69,9 +69,10 @@ impl CMap {
         let mut cm = CMap::default();
         let mut expanded = 0usize;
         let mut lx = Lexer::new(data);
-        while let Some(op) = lx.next_op() {
+        let mut op = OpBuf::default();
+        while lx.next_op_into(&mut op) {
             let args = &op.args;
-            match op.name.as_slice() {
+            match op.name {
                 b"endcodespacerange" => {
                     for pair in args.as_chunks::<2>().0 {
                         if let (Operand::Str(lo), Operand::Str(hi)) = (&pair[0], &pair[1])
@@ -177,7 +178,7 @@ impl CMap {
                 }
                 b"usecmap" => {
                     if let Some(Operand::Name(n)) = args.last() {
-                        cm.parent = Some(n.clone());
+                        cm.parent = Some(n.to_vec());
                     }
                 }
                 _ => {}
@@ -215,6 +216,10 @@ impl CMap {
         let idx = self.uni_ranges.partition_point(|r| r.lo <= code);
         let r = self.uni_ranges.get(idx.checked_sub(1)?)?;
         (code <= r.hi).then(|| offset_string(&r.base, code - r.lo))
+    }
+
+    pub(crate) fn override_unicode(&mut self, code: u32, text: Short) {
+        self.uni.insert(code, text);
     }
 
     pub(crate) fn cid(&self, code: u32) -> Option<u32> {
