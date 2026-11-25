@@ -2,6 +2,7 @@
 
 mod cid2uni;
 pub(crate) mod cjk;
+mod mathabx;
 use cjk::{CodeSource, code_len, fallback_text, predefined_source};
 
 use std::collections::HashMap;
@@ -42,6 +43,8 @@ pub(crate) struct Font {
     composite: Option<Composite>,
     to_unicode: Option<CMap>,
     simple_map: Vec<Option<Short>>,
+    /// 8-bit 简单字体的 256 槽预计算解码表 `(text, scaled_width)`，消除逐字符 CMap 查表与字宽计算开销。
+    simple_fast: Vec<(Short, f64)>,
     first_char: u32,
     widths: Vec<f64>,
     missing_width: f64,
@@ -189,7 +192,12 @@ fn fix_cmmi_oml(base_font: &str, font: &mut Font) {
                 }
             }
         }
-        // 某些旧 CMMI ToUnicode 也会把 0x0F（\epsilon）映成 U+03B5（ε），而把 0x22（\varepsilon）也映成 U+03B5
+        // 某些旧 CMMI ToUnicode 也会把 0x0F（\epsilon）映成 U+03B5（ε）或 U+01EB（ǫ，cmap.sty 历史错映）
+        for c in [0x0Fu32, 0xB2] {
+            if cm.unicode(c).as_deref() == Some("ǫ") {
+                cm.override_unicode(c, Short::from('ϵ'));
+            }
+        }
         if cm.unicode(0x0F).as_deref() == Some("ε") && cm.unicode(0x22).as_deref() == Some("ε") {
             cm.override_unicode(0x0F, Short::from('ϵ'));
         }
@@ -202,6 +210,11 @@ fn fix_cmmi_oml(base_font: &str, font: &mut Font) {
         if font.simple_map[0x27].as_deref() == Some("ϕ") {
             font.simple_map[0x27] = Some(Short::from('φ'));
         }
+        for c in [0x0Fusize, 0xB2] {
+            if font.simple_map[c].as_deref() == Some("ǫ") {
+                font.simple_map[c] = Some(Short::from('ϵ'));
+            }
+        }
         if font.simple_map[0x0F].as_deref() == Some("ε")
             && font.simple_map[0x22].as_deref() == Some("ε")
         {
@@ -210,14 +223,59 @@ fn fix_cmmi_oml(base_font: &str, font: &mut Font) {
     }
 }
 
+/// 修正 CTAN `mathabx`（`TeX-matha` / `TeX-mathb` / `TeX-mathx`）的 T1/Cork 错映 `ToUnicode` 与编码表。
+fn fix_mathabx(base_font: &str, font: &mut Font) {
+    let Some(fam) = mathabx::detect_family(base_font) else {
+        return;
+    };
+    font.math = mathabx::math_kind_of(fam);
+    let lookup = |b: u8| -> Option<Short> {
+        let code = u32::from(b);
+        font.to_unicode
+            .as_ref()
+            .and_then(|c| c.unicode(code))
+            .or_else(|| font.simple_map.get(usize::from(b)).cloned().flatten())
+    };
+    if !mathabx::has_t1_cork_signature(&lookup) {
+        return;
+    }
+    // 用官方 mathabx 槽位表覆盖破损的 T1/Cork 映射
+    font.to_unicode = None;
+    if font.simple_map.len() < 256 {
+        font.simple_map.resize(256, None);
+    }
+    for code in 0..=255u8 {
+        font.simple_map[usize::from(code)] = mathabx::decode_slot(fam, code).map(Short::from);
+    }
+}
+
 impl Font {
-    pub(crate) fn fallback() -> Font {
+    fn empty_simple() -> Font {
         Font {
+            composite: None,
+            to_unicode: None,
+            simple_map: Vec::new(),
+            simple_fast: Vec::new(),
+            first_char: 0,
+            widths: Vec::new(),
+            missing_width: 0.0,
+            std14: None,
+            scale: 0.001,
+            size_factor: 1.0,
+            bold: false,
+            math: MathKind::Text,
+            alt: false,
+        }
+    }
+
+    pub(crate) fn fallback() -> Font {
+        let mut f = Font {
             composite: None,
             to_unicode: None,
             simple_map: (0..=255u8)
                 .map(|c| base_char(BaseEncoding::WinAnsi, c).map(Short::from))
                 .collect(),
+            simple_fast: Vec::new(),
             first_char: 0,
             widths: Vec::new(),
             missing_width: 0.0,
@@ -227,7 +285,9 @@ impl Font {
             bold: false,
             math: MathKind::Text,
             alt: false,
-        }
+        };
+        f.build_simple_fast();
+        f
     }
 
     pub(crate) fn load(doc: &Document, dict: &Dictionary, stream_limit: usize) -> Font {
@@ -260,7 +320,7 @@ impl Font {
         }
 
         let descriptor = get_dict(doc, dict, b"FontDescriptor");
-        let mut font = Font::fallback();
+        let mut font = Font::empty_simple();
         font.alt = alt;
         font.to_unicode = to_unicode;
         font.bold = is_bold(doc, &base_font, descriptor);
@@ -317,11 +377,27 @@ impl Font {
             _ => {}
         }
         // 没指定基础编码、或者是符号字体时，以字体程序自带的编码为准（TeX 字体的 OT1、CMMI、CMSY、
-        // CMEX 编码）：Ghostscript 输出的 TeX 字体常写着 WinAnsi，没列进 Differences 的码实际按内建编码画
+        // CMEX 编码）：Ghostscript 输出的 TeX 字体常写着 WinAnsi，没列进 Differences 的码实际按内建编码画。
+        // 性能优化：若非 alt 路径且 `ToUnicode` 已完整覆盖 `FirstChar..LastChar` 中所有非零宽度的有效码位，
+        // 内建编码在解码时不可达，直接跳过嵌入字体程序的解压与解析。
         let symbolic = descriptor
             .and_then(|d| get_num(doc, d, b"Flags"))
             .is_some_and(|f| (f as i64) & 4 != 0);
-        let builtin = ((!named || symbolic) && subtype != b"TrueType")
+        let to_unicode_covers_used = !alt
+            && font.to_unicode.as_ref().is_some_and(|cm| {
+                !font.widths.is_empty()
+                    && font.widths.iter().enumerate().all(|(i, &w)| {
+                        w <= 0.0
+                            || cm
+                                .unicode(font.first_char.saturating_add(i as u32))
+                                .is_some()
+                    })
+            });
+        let is_mathabx = mathabx::detect_family(&base_font).is_some();
+        let builtin = ((!named || symbolic)
+            && subtype != b"TrueType"
+            && !to_unicode_covers_used
+            && !is_mathabx)
             .then(|| descriptor.and_then(|d| builtin_encoding(doc, d, stream_limit)))
             .flatten()
             .filter(|names| !names_repeat_codes(names));
@@ -361,6 +437,8 @@ impl Font {
             }
         }
         fix_cmmi_oml(&base_font, &mut font);
+        fix_mathabx(&base_font, &mut font);
+        font.build_simple_fast();
         font
     }
 
@@ -439,7 +517,7 @@ impl Font {
                 parse_w(doc, w, &mut comp);
             }
         }
-        let mut font = Font::fallback();
+        let mut font = Font::empty_simple();
         font.std14 = None;
         font.to_unicode = to_unicode;
         font.bold = is_bold(doc, base_font, descriptor);
@@ -448,22 +526,33 @@ impl Font {
         font
     }
 
+    fn build_simple_fast(&mut self) {
+        let mut table = Vec::with_capacity(256);
+        for b in 0..=255u8 {
+            let code = u32::from(b);
+            let text = self
+                .to_unicode
+                .as_ref()
+                .and_then(|c| c.unicode(code))
+                .filter(|t| self.trusted(t))
+                .or_else(|| self.simple_map.get(usize::from(b)).cloned().flatten())
+                .unwrap_or_default();
+            let width = self.simple_width(code, &text);
+            table.push((text, width));
+        }
+        self.simple_fast = table;
+    }
+
     /// 把显示串解码成字符序列。
     pub(crate) fn decode(&self, bytes: &[u8], out: &mut Vec<DecodedChar>) {
         match &self.composite {
             None => {
+                out.reserve(bytes.len());
+                let table = &self.simple_fast;
                 for &b in bytes {
-                    let code = u32::from(b);
-                    let text = self
-                        .to_unicode
-                        .as_ref()
-                        .and_then(|c| c.unicode(code))
-                        .filter(|t| self.trusted(t))
-                        .or_else(|| self.simple_map[usize::from(b)].clone())
-                        .unwrap_or_default();
-                    let width = self.simple_width(code, &text);
+                    let (ref text, width) = table[usize::from(b)];
                     out.push(DecodedChar {
-                        text,
+                        text: text.clone(),
                         width,
                         is_space: b == b' ',
                     });
@@ -651,7 +740,16 @@ fn is_bold(doc: &Document, base_font: &str, descriptor: Option<&Dictionary>) -> 
     let family = name.split(['-', ',']).next().unwrap_or(name);
     if (name.contains("medi") && !name.contains("medium"))
         || family.starts_with("cmbx")
+        || family.starts_with("cmmib")
+        || family.starts_with("cmbsy")
+        || family == "cmb"
+        || family
+            .strip_prefix("cmb")
+            .is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit()))
         || family.starts_with("sfbx")
+        || family.starts_with("eurb")
+        || family.starts_with("eufb")
+        || family.starts_with("eusb")
         || family.contains("midashi")
         || ["w6", "w7", "w8", "w9"]
             .iter()
@@ -664,4 +762,21 @@ fn is_bold(doc: &Document, base_font: &str, descriptor: Option<&Dictionary>) -> 
         return true;
     }
     get_num(doc, d, b"Flags").is_some_and(|f| (f as i64) & (1 << 18) != 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cm_bright_is_not_mistaken_for_cm_bold() {
+        let pdf = b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[]/Count 0>>endobj\nxref\n0 3\n0000000000 65535 f \n0000000009 00000 n \n0000000054 00000 n \ntrailer<</Size 3/Root 1 0 R>>\nstartxref\n103\n%%EOF\n";
+        let doc = crate::file::Document::open(pdf, 1 << 20).unwrap();
+        assert!(is_bold(&doc, "ABCDEF+CMB10", None));
+        assert!(is_bold(&doc, "ABCDEF+CMBX10", None));
+        assert!(is_bold(&doc, "ABCDEF+CMBSY10", None));
+        assert!(!is_bold(&doc, "ABCDEF+CMBR10", None));
+        assert!(!is_bold(&doc, "ABCDEF+CMBRSL10", None));
+        assert!(!is_bold(&doc, "ABCDEF+CMBRMI10", None));
+    }
 }

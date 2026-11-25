@@ -48,12 +48,12 @@ pub(crate) fn reconstruct_big_ops(
             (op.y + 0.85 * op_sz, op.y - 0.20 * op_sz, op.y)
         };
         let x_left = if is_int {
-            op_x0 - 0.30 * op_sz
+            op_x0 + 0.10 * op_sz
         } else {
             op_x0 - 0.85 * op_sz
         };
         let x_right = if is_int {
-            op_x1 + 1.15 * op_sz
+            op_x1 + 1.45 * op_sz
         } else {
             op_x1 + 0.90 * op_sz
         };
@@ -65,8 +65,8 @@ pub(crate) fn reconstruct_big_ops(
             &[i],
             x_left,
             x_right,
-            top_y - 0.10 * op_sz,
-            top_y + 0.78 * op_sz,
+            top_y - 0.15 * op_sz,
+            top_y + if is_int { 0.90 } else { 0.78 } * op_sz,
             op_sz,
             true,
             &mut qbuf,
@@ -291,20 +291,28 @@ fn nearby_equation_baseline(
     body: f64,
     qbuf: &mut Vec<usize>,
 ) -> Option<f64> {
-    buckets.query(approx_y - 0.75 * body, approx_y + 0.75 * body, qbuf);
+    buckets.query(approx_y - 0.60 * body, approx_y + 0.60 * body, qbuf);
     let mut best: Option<(f64, f64)> = None;
     for &k in qbuf.iter() {
         if used[k] {
             continue;
         }
         let g = &glyphs[k];
-        if g.text.trim().is_empty() || g.size < 0.85 * body {
+        let t = g.text.trim();
+        if t.is_empty() || g.size < 0.85 * body {
+            continue;
+        }
+        // 只对齐到右侧紧邻的数学表达式字形（禁止对齐到相邻正文行里的英文词如 `weighted`）
+        let is_math_anchor = g.math != MathKind::Text
+            || t.chars()
+                .all(|c| c.is_ascii_digit() || "+-=<>()[]|".contains(c));
+        if !is_math_anchor {
             continue;
         }
         let dx = g.x - op_x1;
-        if dx >= -0.3 * body
-            && dx <= 3.5 * body
-            && (g.y - approx_y).abs() <= 0.75 * body
+        if dx >= -0.25 * body
+            && dx <= 3.0 * body
+            && (g.y - approx_y).abs() <= 0.60 * body
             && best.is_none_or(|(d, _)| dx.abs() < d)
         {
             best = Some((dx.abs(), g.y));

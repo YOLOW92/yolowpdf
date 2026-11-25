@@ -74,6 +74,19 @@ pub(crate) fn stream_bytes(doc: &Document, obj: &Object, limit: usize) -> Option
     }
 }
 
+/// 仅解压流的前 `prefix` 字节（避免为读取头部解压完整大流）。
+pub(crate) fn stream_bytes_prefix(
+    doc: &Document,
+    obj: &Object,
+    prefix: usize,
+    limit: usize,
+) -> Option<Vec<u8>> {
+    match deref(doc, obj) {
+        Object::Stream(s) => doc.stream_data_prefix(s, prefix, limit),
+        _ => None,
+    }
+}
+
 /// PDF 文本串：UTF-16BE（带 BOM）、UTF-8（带 BOM）或 PDFDocEncoding。
 pub(crate) fn text_string(bytes: &[u8]) -> String {
     if let Some(rest) = bytes.strip_prefix(b"\xFE\xFF") {

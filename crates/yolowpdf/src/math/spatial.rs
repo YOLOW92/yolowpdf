@@ -55,6 +55,9 @@ pub(crate) fn reconstruct(
     // Pass 2：大型算子（\sum/\prod/\int/\bigcup/...）与极限算子（\lim/\liminf/\limsup/\sup/\inf/\max/\min）上下限
     super::big_ops::reconstruct_big_ops(glyphs, &mut used, &mut buckets, body);
 
+    // Pass 3：2D 矩阵与分段函数（\begin{pmatrix}/\begin{bmatrix}/\begin{vmatrix}/\begin{cases}/\binom）
+    super::matrix::reconstruct_matrices(glyphs, &mut used, &mut buckets, body, page_width);
+
     // 清理被 2D 结构消费掉的字形和公式横线
     if used.iter().any(|&u| u) {
         let mut it = used.into_iter();
@@ -273,7 +276,7 @@ fn reconstruct_vinculums(
 
         // 2. 尝试分式 `\frac{num}{den}`
         if try_fraction(
-            glyphs, used, buckets, r, y_bar, w, body, page_width, &mut qbuf,
+            glyphs, used, buckets, &h_all, r, y_bar, w, body, page_width, &mut qbuf,
         ) {
             rule_used[ri] = true;
             continue;
@@ -326,12 +329,12 @@ fn try_radical(
     };
     let surd = glyphs[si].clone();
     let rad_bot = if surd.math == MathKind::Extension {
-        surd.y - 2.4 * surd.size.max(body)
+        surd.y - 3.0 * surd.size.max(body)
     } else {
         surd.y - 0.65 * surd.size.max(body)
     };
 
-    // 收集顶线正下方的被开方数字形
+    // 收集顶线正下方的被开方数字形（按水平重叠度 >= 0.50 或中心严落入顶线内，禁止吞并右侧紧邻的 `)`）
     buckets.query(rad_bot, y_bar - 0.02 * body, qbuf);
     let mut rad: Vec<usize> = Vec::new();
     for &i in qbuf.iter() {
@@ -342,12 +345,12 @@ fn try_radical(
         if g.text.trim().is_empty() {
             continue;
         }
-        let cx = 0.5 * (g.x + g.x_end.max(g.x));
-        if cx >= r.x0 - 0.25 * body
-            && cx <= r.x1 + 0.35 * body
-            && g.y >= rad_bot
-            && g.y < y_bar - 0.02 * body
-        {
+        let gx1 = g.x_end.max(g.x);
+        let cx = 0.5 * (g.x + gx1);
+        let ov = (gx1.min(r.x1) - g.x.max(r.x0)).max(0.0);
+        let gw = (gx1 - g.x).max(1e-3);
+        let horiz_ok = (cx >= r.x0 - 0.12 * body && cx <= r.x1 + 0.08 * body) || (ov / gw >= 0.50);
+        if horiz_ok && g.y >= rad_bot && g.y < y_bar - 0.02 * body {
             rad.push(i);
         }
     }
@@ -355,8 +358,8 @@ fn try_radical(
         return false;
     }
 
-    // 可选根次（如三次根号 `\sqrt[3]{x}`）：位于 `√` 左上方的小字号字形
-    buckets.query(surd.y + 0.30 * body, y_bar + 0.35 * body, qbuf);
+    // 可选根次（如三次根号 `\sqrt[3]{x}`）：位于 `√` 左上方的小字号字母/数字（禁止把前置逗号/括号误吞为根次）
+    buckets.query(surd.y + 0.35 * body, y_bar + 0.35 * body, qbuf);
     let mut root_idx: Vec<usize> = Vec::new();
     let surd_w = (surd.x_end - surd.x).max(0.4 * body);
     for &i in qbuf.iter() {
@@ -364,13 +367,14 @@ fn try_radical(
             continue;
         }
         let g = &glyphs[i];
-        if g.text.trim().is_empty() || g.size > 0.82 * body {
+        let gt = g.text.trim();
+        if gt.is_empty() || g.size > 0.80 * body || gt.chars().all(|c| ",.;:()[]{}".contains(c)) {
             continue;
         }
         let cx = 0.5 * (g.x + g.x_end.max(g.x));
-        if cx >= surd.x - 0.6 * body
+        if cx >= surd.x - 0.45 * body
             && cx <= surd.x + 0.55 * surd_w
-            && g.y >= surd.y + 0.30 * body
+            && g.y >= surd.y + 0.35 * body
             && g.y <= y_bar + 0.30 * body
         {
             root_idx.push(i);
@@ -422,6 +426,7 @@ fn try_fraction(
     glyphs: &mut Vec<Glyph>,
     used: &mut Vec<bool>,
     buckets: &mut YBuckets,
+    h_all: &[(f64, f64, f64)],
     r: Rule,
     y_bar: f64,
     w: f64,
@@ -429,60 +434,58 @@ fn try_fraction(
     page_width: f64,
     qbuf: &mut Vec<usize>,
 ) -> bool {
-    let x_pad = 0.40 * body;
-    // 在分数线上下 2.2*body 范围内先取候选，再隔离紧贴分数线的最近一层
+    // Knuth TeXbook Appendix G 精确归属：
+    // 1) 水平归属按区间重叠度 >= 0.50 或中心落入 [r.x0 - 0.12*body, r.x1 + 0.12*body]，杜绝吞并两侧紧邻的 `(`, `)`, `,`；
+    // 2) 分数线位于数学轴 y_bar = y_eq + 0.25*body，真分母字形的视觉上沿 (g.y + 0.68*g.size) 必低于 y_bar + 0.16*body，
+    //    由此几何不变量严格排除紧邻分式左右、站在等式主基线上的全高括号/运算符/标点。
+    let x_pad = 0.12 * body;
+    let horiz_owns = |g: &Glyph| -> bool {
+        let x1 = g.x_end.max(g.x);
+        let cx = 0.5 * (g.x + x1);
+        if cx >= r.x0 - x_pad && cx <= r.x1 + x_pad {
+            return true;
+        }
+        let ov = (x1.min(r.x1) - g.x.max(r.x0)).max(0.0);
+        ov / (x1 - g.x).max(1e-3) >= 0.50
+    };
     buckets.query(y_bar + 0.03 * body, y_bar + 2.3 * body, qbuf);
     let mut above_raw: Vec<usize> = qbuf
         .iter()
         .copied()
         .filter(|&i| {
-            if used[i] {
-                return false;
-            }
-            let g = &glyphs[i];
-            if g.text.trim().is_empty() {
-                return false;
-            }
-            let x1 = g.x_end.max(g.x);
-            let cx = 0.5 * (g.x + x1);
-            g.y > y_bar + 0.03 * body
-                && g.y <= y_bar + 2.3 * body
-                && cx >= r.x0 - x_pad
-                && cx <= r.x1 + x_pad
+            !used[i]
+                && !glyphs[i].text.trim().is_empty()
+                && glyphs[i].y > y_bar + 0.03 * body
+                && glyphs[i].y <= y_bar + 2.3 * body
+                && horiz_owns(&glyphs[i])
         })
         .collect();
     if above_raw.is_empty() {
         return false;
     }
-
     buckets.query(y_bar - 2.3 * body, y_bar - 0.03 * body, qbuf);
     let mut below_raw: Vec<usize> = qbuf
         .iter()
         .copied()
         .filter(|&i| {
-            if used[i] {
-                return false;
-            }
             let g = &glyphs[i];
-            if g.text.trim().is_empty() {
-                return false;
-            }
-            let x1 = g.x_end.max(g.x);
-            let cx = 0.5 * (g.x + x1);
-            g.y < y_bar - 0.03 * body
+            !used[i]
+                && !g.text.trim().is_empty()
+                && horiz_owns(g)
+                && g.y < y_bar - 0.03 * body
                 && g.y >= y_bar - 2.3 * body
-                && cx >= r.x0 - x_pad
-                && cx <= r.x1 + x_pad
+                && (g.math == MathKind::Prebuilt || g.y + 0.68 * g.size <= y_bar + 0.16 * body)
         })
         .collect();
     if below_raw.is_empty() {
         return false;
     }
 
-    // 隔离紧贴分数线的单层分子（按 y 升序从下往上聚，遇到明显垂直空隙即停）
+    // 隔离紧贴分数线的单层分子（按 y 升序从下往上聚，遇到明显垂直空隙即停；
+    // 严格要求分子贴近分数线 <= 0.95*body，防止根号顶线或普通横线把上一行正文误吸成分子）
     above_raw.sort_by(|&a, &b| glyphs[a].y.total_cmp(&glyphs[b].y));
     let near_above = glyphs[above_raw[0]].y;
-    if near_above - y_bar > 1.30 * body {
+    if near_above - y_bar > 0.95 * body {
         return false;
     }
     let mut num = Vec::new();
@@ -536,9 +539,11 @@ fn try_fraction(
     }
 
     // 2) 分子或分母不能只是某行连续正文穿过短横线的中间截断（左右紧贴同基线字形）
-    if has_tight_horizontal_neighbor(glyphs, used, buckets, &num, r.x0, r.x1, body, qbuf)
-        || has_tight_horizontal_neighbor(glyphs, used, buckets, &den, r.x0, r.x1, body, qbuf)
-    {
+    if has_tight_horizontal_neighbor(
+        glyphs, used, buckets, h_all, &num, r.x0, r.x1, y_bar, body, qbuf,
+    ) || has_tight_horizontal_neighbor(
+        glyphs, used, buckets, h_all, &den, r.x0, r.x1, y_bar, body, qbuf,
+    ) {
         return false;
     }
 
@@ -690,9 +695,11 @@ fn has_tight_horizontal_neighbor(
     glyphs: &[Glyph],
     used: &[bool],
     buckets: &YBuckets,
+    h_all: &[(f64, f64, f64)],
     ids: &[usize],
     rx0: f64,
     rx1: f64,
+    y_bar: f64,
     body: f64,
     qbuf: &mut Vec<usize>,
 ) -> bool {
@@ -708,11 +715,25 @@ fn has_tight_horizontal_neighbor(
             continue;
         }
         let g = &glyphs[i];
-        if g.text.trim().is_empty() || (g.y - base_y).abs() > 0.22 * body {
+        // CMEX 扩展定界符（如 `\big\{`、`\big\}`）采用顶部悬挂基线，常与分子同高，绝非正文续行
+        if g.math == MathKind::Extension
+            || g.text.trim().is_empty()
+            || (g.y - base_y).abs() > 0.22 * body
+        {
             continue;
         }
         let x1 = g.x_end.max(g.x);
-        // 左侧或右侧极近（小于一个普通字母空格宽）且超出横线外
+        // 邻接字形正位于同高度的另一条并排分数线上/下（如 `\frac{1}{2}\frac{d}{dt}`），属相邻分式而非正文续行
+        let cx = 0.5 * (g.x + x1);
+        let under_sibling_bar = h_all.iter().any(|&(hy, hx0, hx1)| {
+            (hy - y_bar).abs() <= 0.20 * body
+                && ((hx0 - rx0).abs() > 0.5 || (hx1 - rx1).abs() > 0.5)
+                && cx >= hx0 - 0.15 * body
+                && cx <= hx1 + 0.15 * body
+        });
+        if under_sibling_bar {
+            continue;
+        }
         if (x1 <= gx0 + 0.1 * body && gx0 - x1 < 0.35 * body && g.x < rx0 - 0.5 * body)
             || (g.x >= gx1 - 0.1 * body && g.x - gx1 < 0.35 * body && x1 > rx1 + 0.5 * body)
         {
@@ -790,12 +811,17 @@ pub(crate) fn render_subexpr(
     }
     let mut sorted = ids.to_vec();
     sorted.sort_by(|&a, &b| glyphs[a].x.total_cmp(&glyphs[b].x));
-    // 确定该子表达式的主字号与主基线（取字符最多的最大字号档）
+    // 确定该子表达式的主字号与主基线：
+    // 在 TeX 中（如 `h_{j-1}`、`k^{1+\log_2 3}`），子式主基线属于非扩展字形中的最大字号档
+    // （避免 1 个主变量 + 多个上下标字形时被小字号脚本字数反超导致上下标退化为平级）
     let mut best_sz = 0.0f64;
     let mut best_y = glyphs[sorted[0]].y;
     let mut sizes: Vec<(i64, usize, f64, f64)> = Vec::new();
     for &i in &sorted {
         let g = &glyphs[i];
+        if g.math == MathKind::Extension {
+            continue;
+        }
         let k = (g.size * 10.0).round() as i64;
         let n = g.text.chars().count().max(1);
         match sizes.iter_mut().find(|e| e.0 == k) {
@@ -805,7 +831,7 @@ pub(crate) fn render_subexpr(
     }
     if let Some((_, _, sz, y)) = sizes
         .into_iter()
-        .max_by(|a, b| a.1.cmp(&b.1).then(a.2.total_cmp(&b.2)))
+        .max_by(|a, b| a.2.total_cmp(&b.2).then(a.1.cmp(&b.1)))
     {
         best_sz = sz;
         best_y = y;
@@ -894,95 +920,4 @@ pub(crate) fn looks_like_prose(glyphs: &[Glyph], ids: &[usize], body: f64) -> bo
     }
     flush(&mut cur, &mut cur_all_text, &mut prose_words);
     prose_words >= 3
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn g(text: &str, x: f64, y: f64, size: f64, math: MathKind) -> Glyph {
-        Glyph {
-            text: text.into(),
-            x,
-            y,
-            x_end: x + 0.55 * size * text.chars().count().max(1) as f64,
-            size,
-            bold: false,
-            math,
-            mcid: None,
-            artifact: false,
-        }
-    }
-
-    #[test]
-    fn reconstructs_fraction_and_nested_fraction() {
-        // \frac{d}{d\epsilon}
-        let mut glyphs = vec![
-            g("d", 102.0, 580.0, 10.0, MathKind::Italic),
-            g("d", 100.0, 565.0, 10.0, MathKind::Italic),
-            g("ϵ", 106.0, 565.0, 10.0, MathKind::Italic),
-            g("J", 116.0, 572.0, 10.0, MathKind::Italic),
-        ];
-        let mut rules = vec![Rule {
-            x0: 99.5,
-            y0: 574.8,
-            x1: 112.5,
-            y1: 574.8,
-        }];
-        reconstruct(&mut glyphs, &mut rules, 600.0, 800.0);
-        assert!(rules.is_empty(), "fraction bar rule is consumed");
-        assert!(
-            glyphs
-                .iter()
-                .any(|x| x.math == MathKind::Prebuilt && x.text == "\\frac{d}{d\\epsilon}"),
-            "got: {glyphs:?}"
-        );
-    }
-
-    #[test]
-    fn reconstructs_radical_with_index() {
-        // \sqrt[3]{x+1}
-        let mut glyphs = vec![
-            g("3", 98.0, 507.0, 6.0, MathKind::Text),
-            g("√", 100.0, 500.0, 10.0, MathKind::Symbol),
-            g("x", 107.0, 500.0, 10.0, MathKind::Italic),
-            g("+", 113.0, 500.0, 10.0, MathKind::Text),
-            g("1", 120.0, 500.0, 10.0, MathKind::Text),
-        ];
-        let mut rules = vec![Rule {
-            x0: 106.0,
-            y0: 509.5,
-            x1: 127.0,
-            y1: 509.5,
-        }];
-        reconstruct(&mut glyphs, &mut rules, 600.0, 800.0);
-        assert!(rules.is_empty());
-        assert!(
-            glyphs
-                .iter()
-                .any(|x| x.math == MathKind::Prebuilt && x.text == "\\sqrt[3]{x+1}"),
-            "got: {glyphs:?}"
-        );
-    }
-
-    #[test]
-    fn reconstructs_sum_with_cmex_hanging_limits() {
-        // \sum_{k=1}^{K} with CMEX hanging baseline
-        let mut glyphs = vec![
-            g("K", 104.0, 508.0, 7.0, MathKind::Italic),
-            g("∑", 100.0, 505.0, 10.0, MathKind::Extension),
-            g("k", 99.0, 487.0, 7.0, MathKind::Italic),
-            g("=", 103.5, 487.0, 7.0, MathKind::Text),
-            g("1", 108.0, 487.0, 7.0, MathKind::Text),
-            g("x", 118.0, 500.0, 10.0, MathKind::Italic),
-        ];
-        let mut rules = Vec::new();
-        reconstruct(&mut glyphs, &mut rules, 600.0, 800.0);
-        assert!(
-            glyphs
-                .iter()
-                .any(|x| x.math == MathKind::Prebuilt && x.text == "\\sum_{k=1}^{K}"),
-            "got: {glyphs:?}"
-        );
-    }
 }

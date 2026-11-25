@@ -1,6 +1,7 @@
 //! TeX 语法树构建与公式排版逻辑（含 DRACULAE 2D 上下标解缠、TeX 算子识别、组合符号与 KaTeX 语法守护）。
 
 use super::footnote;
+use super::segment::{is_math_qualifier, segment_math_spans};
 use super::symbols::{
     ACCENTS, FUNCS, OPERATORS, is_combining, is_func_or_op, is_greek, is_math_symbol, push_char,
 };
@@ -18,30 +19,6 @@ pub(crate) enum Word {
     Text,
     Glue,
     Math,
-}
-
-/// 公式内部常见的短自然语言限定词（出现在未闭合括号内或两段公式之间时用 `\text{...}` 桥接）。
-fn is_math_qualifier(s: &str) -> bool {
-    matches!(
-        s,
-        "iff"
-            | "if"
-            | "for"
-            | "and"
-            | "or"
-            | "when"
-            | "where"
-            | "with"
-            | "a.a."
-            | "a.e."
-            | "s.t."
-            | "a.s."
-            | "i.e."
-            | "w.r.t."
-            | "const"
-            | "otherwise"
-            | "all"
-    )
 }
 
 pub(crate) fn classify(word: &[Item<'_>]) -> Word {
@@ -87,7 +64,14 @@ pub(crate) fn classify(word: &[Item<'_>]) -> Word {
 pub(crate) fn evidence(item: &Item<'_>) -> bool {
     let c = item.text.trim().chars().next();
     match item.g.math {
-        MathKind::Text => false,
+        // TeX 中只有大写希腊字母（CMR）落在 Text 字体里；普通 Word/HTML 表格里的单位 `μm`/`μM`、
+        // `Cronbach's α`、`≥ 90%` 均在正文字体，绝不能被误判为 LaTeX 公式。
+        MathKind::Text => item.text.chars().any(|ch| {
+            matches!(
+                ch,
+                'Γ' | 'Δ' | '∆' | 'Θ' | 'Λ' | 'Ξ' | 'Π' | 'Σ' | 'Υ' | 'Φ' | 'Ψ' | 'Ω' | 'Ω'
+            )
+        }),
         MathKind::Prebuilt => !item.text.trim().is_empty(),
         MathKind::Symbol => c.is_some_and(|c| {
             c.is_alphanumeric() || is_math_symbol(c) || "=+<>|()[]{}′'".contains(c)
@@ -205,11 +189,15 @@ pub(crate) fn tex_of(items: &[&Item<'_>], base_y: f64, base_size: f64) -> String
             });
             continue;
         }
-        if t == "↦" && k < items.len() && items[k].text.trim() == "→" {
+        if (t == "↦" || t == "↪") && k < items.len() && items[k].text.trim() == "→" {
             let ng = items[k].g;
             k += 1;
             atoms.push(Atom {
-                tex: "\\mapsto ".to_string(),
+                tex: if t == "↦" {
+                    "\\mapsto ".to_string()
+                } else {
+                    "\\hookrightarrow ".to_string()
+                },
                 x0: g.x.min(ng.x),
                 x1: g.x_end.max(ng.x_end).max(g.x),
                 y: ng.y,
@@ -330,8 +318,29 @@ pub(crate) fn tex_of(items: &[&Item<'_>], base_y: f64, base_size: f64) -> String
             continue;
         }
         let mut tex = String::new();
-        for c in t.chars() {
-            push_char(c, g.math, &mut tex);
+        // 数学模式里的粗体字形：`CMBX`/`Nimbus-Medi` 字母数字 → `\mathbf{...}`，`CMMIB` 斜体字母/希腊字母 → `\boldsymbol{...}`
+        if g.bold
+            && matches!(g.math, MathKind::Text | MathKind::Italic)
+            && t.chars().all(|c| c.is_ascii_alphanumeric() || is_greek(c))
+            && t.chars().any(|c| c.is_ascii_alphabetic() || is_greek(c))
+        {
+            let mut inner = String::new();
+            for c in t.chars() {
+                push_char(c, MathKind::Text, &mut inner);
+            }
+            let cmd = if g.math == MathKind::Italic || t.chars().any(is_greek) {
+                "\\boldsymbol"
+            } else {
+                "\\mathbf"
+            };
+            tex.push_str(cmd);
+            tex.push('{');
+            tex.push_str(inner.trim());
+            tex.push('}');
+        } else {
+            for c in t.chars() {
+                push_char(c, g.math, &mut tex);
+            }
         }
         let is_dot = t == ".";
         let is_cdot = t == "·" || t == "⋅";
@@ -690,21 +699,6 @@ fn sanitize_tex(raw: &str) -> String {
     s
 }
 
-/// 统计词内未配平的开定界符数（`{`, `(`, `[` 减 `}`, `)`, `]`）。
-fn delim_delta(word: &[Item<'_>]) -> i32 {
-    let mut d = 0i32;
-    for item in word {
-        for c in item.text.chars() {
-            match c {
-                '{' | '(' | '[' => d += 1,
-                '}' | ')' | ']' => d -= 1,
-                _ => {}
-            }
-        }
-    }
-    d
-}
-
 /// 一行的文字。没有公式时返回 None，调用方照普通文字拼。
 pub(crate) fn line_text(words: &[Vec<Item<'_>>], base_y: f64, base_size: f64) -> Option<String> {
     let mut kinds: Vec<Word> = words.iter().map(|w| classify(w)).collect();
@@ -736,73 +730,16 @@ pub(crate) fn line_text(words: &[Vec<Item<'_>>], base_y: f64, base_size: f64) ->
         }
         return Some(out);
     }
-    let mut spans: Vec<(usize, usize)> = Vec::new();
-    let mut i = 0;
-    while i < words.len() {
-        if kinds[i] != Word::Math {
-            i += 1;
-            continue;
-        }
-        let mut start = i;
-        while start > 0 && kinds[start - 1] == Word::Glue {
-            start -= 1;
-        }
-        let mut end = i + 1;
-        let mut open_delims: i32 = words[start..end].iter().map(|w| delim_delta(w)).sum();
-        loop {
-            let mut j = end;
-            while j < words.len() && kinds[j] == Word::Glue {
-                j += 1;
-            }
-            if j < words.len() && kinds[j] == Word::Math {
-                for w in &words[end..=j] {
-                    open_delims += delim_delta(w);
-                }
-                end = j + 1;
-                continue;
-            }
-            // 未闭合括号内或两段公式之间的短限定词（如 `a.a.`, `for`, `iff`, `if`, `const`）桥接进公式
-            if j < words.len() && kinds[j] == Word::Text && !footnote[j] {
-                let raw = plain(&words[j]);
-                let raw_t = raw.trim().trim_end_matches([',', ';', ':']);
-                let qual = is_math_qualifier(raw_t);
-                let short_inside_brace = open_delims > 0 && raw_t.len() <= 8;
-                if qual || short_inside_brace {
-                    let mut m = j + 1;
-                    while m < words.len() && kinds[m] == Word::Glue {
-                        m += 1;
-                    }
-                    // 若紧跟另一段数学，或者本身是 `const` 且前面有 `+`/`=` 算符，则并入
-                    if (m < words.len() && kinds[m] == Word::Math) || raw_t == "const" {
-                        let new_end = if m < words.len() && kinds[m] == Word::Math {
-                            m + 1
-                        } else {
-                            j + 1
-                        };
-                        for w in &words[end..new_end] {
-                            open_delims += delim_delta(w);
-                        }
-                        end = new_end;
-                        continue;
-                    }
-                }
-            }
-            end = j;
-            break;
-        }
-        while start < end && punct_only(&words[start]) {
-            start += 1;
-        }
-        while end > start && punct_only(&words[end - 1]) {
-            end -= 1;
-        }
-        if words[start..end].iter().flatten().any(evidence) {
-            spans.push((start, end));
-        }
-        i = end.max(i + 1);
-    }
+    let spans = segment_math_spans(words, &kinds, &footnote);
     if spans.is_empty() {
-        return None;
+        if !footnote.contains(&true) {
+            return None;
+        }
+        let mut out = String::new();
+        for i in 0..words.len() {
+            push_word(&mut out, &word_text(i));
+        }
+        return Some(out);
     }
     let mut out = String::new();
     let mut w = 0;

@@ -84,7 +84,45 @@ pub(crate) fn prose(t: &Table) -> bool {
         })
         .count();
     let leader = leaders * 2 > t.rows.len();
-    lower / n > 0.25 || words / n > 4.0 || cjk / n > 0.25 || leader
+    // 数学公式/矩阵防误吞守护：含大型定界符碎片（`[`, `]`, `(`, `)`, ``, ``）或几乎全为 LaTeX 方程且缺普通表头词的块
+    // 本质是行间公式/对齐方程组而非数据表格（同时保留含少量数学符号变量的真实科研表格）
+    let is_delim_junk = |s: &str| {
+        let s = s.trim();
+        !s.is_empty()
+            && s.chars().all(|ch| {
+                "()[]{}|$ ".contains(ch)
+                    || ('\u{239B}'..='\u{23AD}').contains(&ch)
+                    || ('\u{F8EB}'..='\u{F8FE}').contains(&ch)
+            })
+            && s.chars().any(|ch| {
+                "()[]{}".contains(ch)
+                    || ('\u{239B}'..='\u{23AD}').contains(&ch)
+                    || ('\u{F8EB}'..='\u{F8FE}').contains(&ch)
+            })
+    };
+    let bracket_junk = cells.iter().filter(|c| is_delim_junk(c)).count();
+    let math_cells = cells
+        .iter()
+        .filter(|c| {
+            c.contains('$')
+                || c.contains("\\frac")
+                || c.contains("\\sum")
+                || c.contains("\\int")
+                || is_delim_junk(c)
+        })
+        .count() as f64;
+    let plain_words = cells
+        .iter()
+        .filter(|c| {
+            !c.contains('$')
+                && c.split_whitespace()
+                    .any(|w| w.len() >= 3 && w.chars().all(|ch| ch.is_ascii_alphabetic()))
+        })
+        .count() as f64;
+    let math_heavy = (bracket_junk >= 1 && math_cells / n >= 0.35)
+        || (bracket_junk * 4 >= cells.len().max(1))
+        || (math_cells / n >= 0.72 && plain_words / n < 0.15);
+    lower / n > 0.25 || words / n > 4.0 || cjk / n > 0.25 || leader || math_heavy
 }
 
 /// 三线表检测（横向范围相近、上下对齐的横线组合）。`accept` 再核对一遍候选的片段。

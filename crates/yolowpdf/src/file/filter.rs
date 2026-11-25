@@ -51,6 +51,39 @@ pub(crate) fn decode(
     Ok(buf.unwrap_or_default())
 }
 
+/// 仅解码流的前 `prefix_limit` 字节（用于 Type1 `FontFile` 的明文头部 `Length1`，避免解压整段加密字形轮廓）。
+/// 仅当过滤器链是单层无预测器的 FlateDecode 时启用前缀早停，其余退回全量解码。
+pub(crate) fn decode_prefix(
+    raw: &[u8],
+    filters: &[(&[u8], Option<&Dictionary>)],
+    prefix_limit: usize,
+    full_limit: usize,
+) -> Result<Vec<u8>, DecodeError> {
+    let cap = prefix_limit.min(full_limit);
+    if filters.is_empty() {
+        let take = raw.len().min(cap);
+        return Ok(raw[..take].to_vec());
+    }
+    if filters.len() == 1
+        && matches!(filters[0].0, b"FlateDecode" | b"Fl")
+        && int_param(filters[0].1, b"Predictor", 1) <= 1
+    {
+        return inflate_prefix(raw, cap);
+    }
+    decode(raw, filters, full_limit)
+}
+
+fn inflate_prefix(input: &[u8], cap: usize) -> Result<Vec<u8>, DecodeError> {
+    if input.is_empty() || cap == 0 {
+        return Ok(Vec::new());
+    }
+    let out = inflate_core(input, true, cap, true)?;
+    if out.is_empty() && input.len() > 2 {
+        return inflate_core(&input[2..], false, cap, true);
+    }
+    Ok(out)
+}
+
 fn int_param(params: Option<&Dictionary>, key: &[u8], default: i64) -> i64 {
     params
         .and_then(|p| p.get(key))
@@ -68,14 +101,19 @@ fn inflate(input: &[u8], limit: usize) -> Result<Vec<u8>, DecodeError> {
     if input.is_empty() {
         return Ok(Vec::new());
     }
-    let out = inflate_with(input, true, limit)?;
+    let out = inflate_core(input, true, limit, false)?;
     if out.is_empty() && input.len() > 2 {
-        return inflate_with(&input[2..], false, limit);
+        return inflate_core(&input[2..], false, limit, false);
     }
     Ok(out)
 }
 
-fn inflate_with(input: &[u8], zlib: bool, limit: usize) -> Result<Vec<u8>, DecodeError> {
+fn inflate_core(
+    input: &[u8],
+    zlib: bool,
+    limit: usize,
+    early_stop: bool,
+) -> Result<Vec<u8>, DecodeError> {
     use std::cell::RefCell;
 
     use miniz_oxide::inflate::TINFLStatus;
@@ -86,8 +124,8 @@ fn inflate_with(input: &[u8], zlib: bool, limit: usize) -> Result<Vec<u8>, Decod
             RefCell::new(Box::<DecompressorOxide>::default());
     }
 
-    let mut flags = inflate_flags::TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF
-        | inflate_flags::TINFL_FLAG_HAS_MORE_INPUT;
+    // 整段压缩数据已在内存中，不设置 TINFL_FLAG_HAS_MORE_INPUT，避免截断输入在 NeedsMoreInput 上空转
+    let mut flags = inflate_flags::TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF;
     if zlib {
         flags |=
             inflate_flags::TINFL_FLAG_PARSE_ZLIB_HEADER | inflate_flags::TINFL_FLAG_IGNORE_ADLER32;
@@ -95,39 +133,45 @@ fn inflate_with(input: &[u8], zlib: bool, limit: usize) -> Result<Vec<u8>, Decod
     INFLATE_STATE.with(|cell| {
         let mut state = cell.borrow_mut();
         state.init();
-        let cap = limit.saturating_add(1);
-        let mut out = vec![0u8; input.len().saturating_mul(3).max(1024).min(cap)];
+        let cap = if early_stop {
+            limit
+        } else {
+            limit.saturating_add(1)
+        };
+        let init_min = if early_stop { 512 } else { 1024 };
+        let mut out = vec![0u8; input.len().saturating_mul(3).max(init_min).min(cap)];
         let mut in_pos = 0;
         let mut out_pos = 0;
         loop {
-            // 输入给完以后去掉“还有输入”标志，让解码器知道数据到头了
-            let f = if in_pos >= input.len() {
-                flags & !inflate_flags::TINFL_FLAG_HAS_MORE_INPUT
-            } else {
-                flags
-            };
             let (status, read, written) =
-                decompress(&mut state, &input[in_pos..], &mut out, out_pos, f);
+                decompress(&mut state, &input[in_pos..], &mut out, out_pos, flags);
             in_pos += read;
             out_pos += written;
+            if early_stop && out_pos >= limit {
+                out.truncate(limit);
+                return Ok(out);
+            }
             match status {
                 TINFLStatus::HasMoreOutput => {
-                    if out_pos > limit {
+                    if !early_stop && out_pos > limit {
                         return Err(DecodeError::TooLarge);
                     }
-                    // 翻倍，但总长不超过上限 + 1（再多一个字节就足以判定超限）
                     let len = out.len().saturating_mul(2).min(cap);
+                    if len == out.len() {
+                        break;
+                    }
                     out.resize(len, 0);
                 }
-                TINFLStatus::NeedsMoreInput if in_pos < input.len() => {}
+                TINFLStatus::NeedsMoreInput
+                    if in_pos < input.len() && (read > 0 || written > 0) => {}
                 // 完成、输入截断或数据损坏：都保留已经解出的部分
                 _ => break,
             }
         }
-        if out_pos > limit {
+        if !early_stop && out_pos > limit {
             return Err(DecodeError::TooLarge);
         }
-        out.truncate(out_pos);
+        out.truncate(out_pos.min(limit));
         Ok(out)
     })
 }
@@ -753,5 +797,23 @@ mod tests {
             Err(DecodeError::TooLarge)
         );
         assert_eq!(ascii_hex(b"41424", 2), Err(DecodeError::TooLarge));
+    }
+
+    #[test]
+    fn decode_prefix_stops_early_and_never_hangs_on_truncated_zlib() {
+        let payload: Vec<u8> = (0..8192).map(|i| (i % 97) as u8).collect();
+        let compressed = flate(&payload);
+        let pref = decode_prefix(&compressed, &[(b"FlateDecode", None)], 128, 1 << 20).unwrap();
+        assert_eq!(pref, &payload[..128]);
+
+        // 截断的 1 字节 / 2 字节 / 残缺 zlib 头绝不能死循环
+        for bad in [&[0x78u8][..], &[0x78, 0x9C][..], &[0x78, 0x9C, 0x01][..]] {
+            let out = decode_prefix(bad, &[(b"FlateDecode", None)], 64, 1024).unwrap();
+            assert!(out.len() <= 64);
+        }
+
+        // 无过滤器流按 min(prefix_limit, full_limit) 一致截断
+        let raw_pref = decode_prefix(&payload, &[], 64, 32).unwrap();
+        assert_eq!(raw_pref, &payload[..32]);
     }
 }

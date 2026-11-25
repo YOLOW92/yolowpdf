@@ -2,6 +2,14 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org/).
 
+## 0.1.4
+
+- **Math & matrices:** 2-D matrix/cases/binomial reconstruction (`pmatrix`, `bmatrix`, `vmatrix`, `Bmatrix`, `cases`, `\binom`), Ghostscript/dvips 1×1 `ImageMask` rule recovery for fraction/radical bars, and 2-state Viterbi HMM text/math segmentation protecting inline units and prose.
+- **Fonts:** CTAN `mathabx` (`TeX-matha/b/x`) T1/Cork decoding, `CMBR*` non-bold handling, CMMI `0x0F`/`0xB2` and Greek `U+1D6B9`/`U+1D6F3` fixes.
+- **Parsing speed:** flat direct-indexed object `SlotTable`, unified prefix-decoded Type1 `Length1` inflate path, 256-slot simple font lookup table, and loop-invariant hoisting in text placement.
+- **Measured** on olmOCR-bench, the six born-digital categories (7,295 checks, `YOLOWPDF_FAST_MATH=1` scoring, higher is better): passed 4,896 → 5,170; mean 0.6792 → 0.6950. By category: arxiv_math 0.5576 → 0.6505, table_tests 0.5910 → 0.5930, multi_column 0.7161 → 0.7161, long_tiny_text 0.4796 → 0.4796, headers_footers 0.7316 → 0.7316, baseline 0.9992 → 0.9992.
+- **Measured** (`release-fast` `pdf_dir_mt`, lower is better): 1,403 olmOCR PDFs 1-thread 3.516 s → 3.432 s (408.8 p/s), 16-thread 0.499 s → 0.456 s (3,074.3 p/s); 1,089 pdfjs PDFs 16-thread 0.661 s → 0.610 s (1,785.4 p/s, 0 panics).
+
 ## 0.1.3
 
 - **Math:** native 2-D formula reconstruction (fractions, roots, sub/superscripts, big-operator limits, overlapping scripts) from glyph geometry, with a bucketed spatial index.

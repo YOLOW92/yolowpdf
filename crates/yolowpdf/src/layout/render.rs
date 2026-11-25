@@ -798,13 +798,17 @@ pub(super) fn merge_math(text: &str) -> std::borrow::Cow<'_, str> {
         {
             let next = merged[idx + 1].1.clone();
             let trimmed = next.trim_start();
-            let tok_end = trimmed
+            let raw_end = trimmed
                 .find(|c: char| !c.is_ascii_digit() && c != '.')
                 .unwrap_or(trimmed.len());
+            // 剥离句末句点（如 `$k \geq$ 2.` 中的 `.`），避免句点阻断吸收数字 `2`
+            let mut tok_end = raw_end;
+            while tok_end > 0 && trimmed.as_bytes()[tok_end - 1] == b'.' {
+                tok_end -= 1;
+            }
             let tok = &trimmed[..tok_end];
             if !tok.is_empty()
                 && tok.chars().any(|c| c.is_ascii_digit())
-                && !tok.ends_with('.')
                 && trimmed[tok_end..]
                     .chars()
                     .next()

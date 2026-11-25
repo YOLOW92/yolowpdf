@@ -138,9 +138,9 @@ pub(crate) fn fragments(
             .then(glyphs[a].x.total_cmp(&glyphs[b].x))
     });
 
-    // 先严格按基线聚成行，再处理首字下沉（Drop Cap）并把上下标小字号短行挂到相邻大字号行上。
-    // 注意：行代表字号用众数/中位数而不是 max，防止单个超大首字下沉或页眉 Logo 拉大整行字号、
-    // 从而把相邻两行正文错误合并成乱序交错行（例如 `i4FRJIADNAUYARY`）。
+    // 先按基线初步聚带，再按水平空隙（栏间空白 > 2.2*size 或跨 0.75*size 空白的显著字号跳变）拆分成局部水平段。
+    // 这彻底解耦双栏/多栏相位错位页面（如 IEEE 双栏论文中左栏正文 y_1 恰好撞上右栏上标 y_2 + 3.6pt），
+    // 防止另一栏的正文行劫持本栏的数学上下标行导致全栏上标脱离为孤立段落。
     struct Row {
         idx: Vec<usize>,
         y: f64,
@@ -148,40 +148,63 @@ pub(crate) fn fragments(
         x0: f64,
         x1: f64,
     }
-    let mut rows: Vec<Row> = Vec::new();
+    let mut bands: Vec<(f64, f64, Vec<usize>)> = Vec::new();
     for i in order {
         let g = &glyphs[i];
-        match rows.last_mut() {
-            Some(r)
-                if (r.y - g.y).abs() <= 0.15 * r.size.min(g.size).max(1.0)
-                    || ((r.y - g.y).abs() <= 0.15 * r.size.max(g.size)
-                        && (r.size / g.size.max(0.1)).max(g.size / r.size.max(0.1)) <= 1.6) =>
+        match bands.last_mut() {
+            Some((by, bsz, ids))
+                if (*by - g.y).abs() <= 0.15 * bsz.min(g.size).max(1.0)
+                    || ((*by - g.y).abs() <= 0.15 * bsz.max(g.size)
+                        && (*bsz / g.size.max(0.1)).max(g.size / bsz.max(0.1)) <= 1.6) =>
             {
-                r.idx.push(i);
-                r.x0 = r.x0.min(g.x);
-                r.x1 = r.x1.max(g.x_end.max(g.x));
-                // 更新行字号为当前行中位数近似（不让单个超大首字污染整行）
-                if r.idx.len() <= 3 {
-                    r.size = r.size.max(g.size);
+                ids.push(i);
+                if ids.len() <= 3 {
+                    *bsz = bsz.max(g.size);
                 }
             }
-            _ => rows.push(Row {
-                idx: vec![i],
-                y: g.y,
-                size: g.size,
-                x0: g.x,
-                x1: g.x_end.max(g.x),
-            }),
+            _ => bands.push((g.y, g.size, vec![i])),
         }
     }
-    // 按字符数加权中位数重新定每行的真实字号（消除单个超大字形对行字号的污染）
-    for r in &mut rows {
-        if r.idx.len() >= 2 {
-            let mut szs: Vec<f64> = r.idx.iter().map(|&k| glyphs[k].size).collect();
-            szs.sort_by(f64::total_cmp);
-            r.size = szs[szs.len() / 2];
+    let mut rows: Vec<Row> = Vec::with_capacity(bands.len());
+    for (_, _, mut ids) in bands {
+        ids.sort_by(|&a, &b| glyphs[a].x.total_cmp(&glyphs[b].x));
+        let mut start = 0usize;
+        let mut prev_end = glyphs[ids[0]].x_end.max(glyphs[ids[0]].x);
+        let mut seg_sz = glyphs[ids[0]].size;
+        for pos in 1..ids.len() {
+            let g = &glyphs[ids[pos]];
+            let gap = g.x - prev_end;
+            let sz_max = seg_sz.max(g.size).max(1.0);
+            // 仅在真正宽于栏间空白（> 2.2*size）处横向拆带，防止把同栏行内公式按微小字距切碎
+            if gap > 2.2 * sz_max {
+                let slice = ids[start..pos].to_vec();
+                let (x0, x1, y, size) = summarize_row(&slice, glyphs);
+                rows.push(Row {
+                    idx: slice,
+                    y,
+                    size,
+                    x0,
+                    x1,
+                });
+                start = pos;
+                prev_end = g.x_end.max(g.x);
+                seg_sz = g.size;
+            } else {
+                prev_end = prev_end.max(g.x_end.max(g.x));
+                seg_sz = seg_sz.max(g.size);
+            }
         }
+        let slice = ids[start..].to_vec();
+        let (x0, x1, y, size) = summarize_row(&slice, glyphs);
+        rows.push(Row {
+            idx: slice,
+            y,
+            size,
+            x0,
+            x1,
+        });
     }
+    rows.sort_by(|a, b| b.y.total_cmp(&a.y).then(a.x0.total_cmp(&b.x0)));
 
     // 首字下沉（Drop Cap）识别与归位：孤立单个大号大写字母位于 2–4 行缩进正文左侧时，
     // 记录其归属到最顶上那一行缩进正文的开头，并从原位置移除。
@@ -303,12 +326,11 @@ pub(crate) fn fragments(
             .iter()
             .any(|&k| glyphs[k].math != crate::font::MathKind::Text);
         let mut best: Option<(usize, f64)> = None;
-        for (j, h) in rows
-            .iter()
-            .enumerate()
-            .take((i + 9).min(rows.len()))
-            .skip(i.saturating_sub(8))
-        {
+        // rows 已按 y 降序排好：在上下 1.5*body 垂直邻域内搜索所有水平重叠的宿主行（多栏分拆后仍 O(1) 均摊）
+        let y_win = (1.25 * page_body).max(18.0);
+        let lo = rows.partition_point(|h| h.y > r.y + y_win);
+        let hi = rows.partition_point(|h| h.y >= r.y - y_win);
+        for (j, h) in rows.iter().enumerate().take(hi).skip(lo) {
             if j == i || h.idx.is_empty() {
                 continue;
             }
@@ -416,6 +438,31 @@ pub(crate) fn fragments(
     out
 }
 
+fn summarize_row(ids: &[usize], glyphs: &[Glyph]) -> (f64, f64, f64, f64) {
+    let mut x0 = f64::INFINITY;
+    let mut x1 = f64::NEG_INFINITY;
+    let y = glyphs[ids[0]].y;
+    let size = if ids.len() >= 2 {
+        let mut szs: Vec<f64> = ids
+            .iter()
+            .map(|&k| {
+                let g = &glyphs[k];
+                x0 = x0.min(g.x);
+                x1 = x1.max(g.x_end.max(g.x));
+                g.size
+            })
+            .collect();
+        szs.sort_by(f64::total_cmp);
+        szs[szs.len() / 2]
+    } else {
+        let g = &glyphs[ids[0]];
+        x0 = g.x;
+        x1 = g.x_end.max(g.x);
+        g.size
+    };
+    (x0, x1, y, size)
+}
+
 fn prepend_drop_cap(line: &mut Line, dg: &Glyph, add_space: bool) {
     let ch = dg.text.trim();
     if ch.is_empty() {
@@ -521,6 +568,24 @@ fn make_line(glyphs: &[&Glyph]) -> Option<Line> {
             };
             if pending_space || gap > limit * g.size.max(p.size) {
                 new_word = true;
+            }
+            // 防止长英文普通词（如 `frequency`）与紧邻无空隙的希腊字母/数学符号粘成同一词而被吸入 `$...$`
+            if !new_word
+                && p.math == crate::font::MathKind::Text
+                && g.math != crate::font::MathKind::Text
+                && (g.y - p.y).abs() <= 0.15 * p.size
+                && let Some(last_w) = words.last()
+                && last_w
+                    .iter()
+                    .all(|it| it.g.math == crate::font::MathKind::Text)
+            {
+                let cur_word: String = last_w.iter().map(|it| it.text.as_str()).collect();
+                if cur_word.len() >= 4
+                    && cur_word.chars().all(|c| c.is_ascii_alphabetic())
+                    && !crate::math::symbols::is_func_or_op(&cur_word)
+                {
+                    new_word = true;
+                }
             }
         }
         pending_space = false;

@@ -255,7 +255,10 @@ impl<'a> Interp<'a> {
                 }
                 b"TJ" => {
                     if let Some(Operand::Array(items)) = a.first() {
-                        let font = gs.font.clone().unwrap_or_else(|| self.fallback.clone());
+                        let font = match gs.font.as_ref() {
+                            Some(f) => Rc::clone(f),
+                            None => Rc::clone(&self.fallback),
+                        };
                         for it in items {
                             match it {
                                 Operand::Str(s) => {
@@ -265,7 +268,8 @@ impl<'a> Interp<'a> {
                                 }
                                 Operand::Num(k) => {
                                     let tx = -k / 1000.0 * gs.size * gs.h_scale;
-                                    tm = Matrix::translate(tx, 0.0).mul(&tm);
+                                    tm.0[4] += tx * tm.0[0];
+                                    tm.0[5] += tx * tm.0[1];
                                 }
                                 _ => {}
                             }
@@ -324,13 +328,21 @@ impl<'a> Interp<'a> {
                     (gs.fill, gs.stroke) = (f, st);
                 }
                 b"BI" => {
-                    let inline = match (a.first(), a.get(1)) {
-                        (Some(Operand::Str(h)), Some(Operand::Str(d))) => {
-                            Some(ImageSource::Inline(Rc::new((h.to_vec(), d.to_vec()))))
-                        }
-                        _ => None,
-                    };
-                    self.image(&gs.ctm, inline);
+                    // Ghostscript/dvips 常把分式横线、根号顶线、表格线画成 1×1 内联图像掩码
+                    // （`BI /IM true /W 1 /H 1 /BPC 1`）经 CTM 拉成细长矩形：识别为线段规则，不污染图片列表
+                    let is_thin_mask = !self.text_only
+                        && !gs.fill.white
+                        && matches!(a.first(), Some(Operand::Str(h)) if is_1x1_inline_mask(h))
+                        && self.try_mask_rule(&gs.ctm);
+                    if !is_thin_mask {
+                        let inline = match (a.first(), a.get(1)) {
+                            (Some(Operand::Str(h)), Some(Operand::Str(d))) => {
+                                Some(ImageSource::Inline(Rc::new((h.to_vec(), d.to_vec()))))
+                            }
+                            _ => None,
+                        };
+                        self.image(&gs.ctm, inline);
+                    }
                 }
                 b"BMC" | b"BDC" => {
                     let tag = match a.first() {
@@ -485,7 +497,35 @@ impl<'a> Interp<'a> {
     }
 
     /// 把解码好的字放到页面上，推进文本矩阵。
+    /// 数学优化：字串内仅沿文本空间 x 轴平移，线性部 `[a, b, c, d]`、字号 `size`、旋转方向 `dir`
+    /// 与标记内容状态对整段 `chars` 都是循环不变量，外提到循环前算一次即可（消除逐字 `hypot` 和 6 元矩阵乘法）。
     fn place(&mut self, chars: &[DecodedChar], font: &Font, gs: &GState, tm: &mut Matrix) {
+        if chars.is_empty() {
+            return;
+        }
+        let ctm = &gs.ctm.0;
+        let a = tm.0[0] * ctm[0] + tm.0[1] * ctm[2];
+        let b = tm.0[0] * ctm[1] + tm.0[1] * ctm[3];
+        let c = tm.0[2] * ctm[0] + tm.0[3] * ctm[2];
+        let d = tm.0[2] * ctm[1] + tm.0[3] * ctm[3];
+        let size = gs.size.abs() * c.hypot(d) * font.size_factor;
+        let dir = crate::orient::quarter(a, b);
+        let size_ok = size.is_finite() && size > 0.1;
+        let rise_x = gs.rise * c;
+        let rise_y = gs.rise * d;
+        let width_scale = gs.size * gs.h_scale;
+        let ab_len = if dir.is_some_and(|d| d != 0) {
+            a.hypot(b)
+        } else {
+            a
+        };
+        let mcid = self.marked.last().and_then(|m| m.mcid);
+        let artifact = self.marked.last().is_some_and(|m| m.artifact);
+        let mut stored =
+            self.ink.glyphs.len() + self.ink.turned.iter().map(Vec::len).sum::<usize>();
+        let w_hi = self.ink.width + size;
+        let h_hi = self.ink.height + size;
+
         for ch in chars {
             if ch.text.is_empty() {
                 if !ch.is_space {
@@ -499,54 +539,95 @@ impl<'a> Interp<'a> {
                     }
                 }
             }
-            let m = tm.mul(&gs.ctm);
-            let [a, b, c, d, e, f] = m.0;
-            let x = e + gs.rise * c;
-            let y = f + gs.rise * d;
-            let size = gs.size.abs() * c.hypot(d) * font.size_factor;
-            let glyph_w = ch.width * gs.size * gs.h_scale;
-            // 斜着的字（多是水印）不收；转了 90°、180°、270° 的单独存放，排版前由 orient.rs 处理
-            let dir = crate::orient::quarter(a, b);
-            let stored =
-                self.ink.glyphs.len() + self.ink.turned.iter().map(Vec::len).sum::<usize>();
             if let Some(dir) = dir
+                && size_ok
                 && !ch.text.is_empty()
-                && x.is_finite()
-                && y.is_finite()
-                && size.is_finite()
-                && size > 0.1
                 && stored < MAX_GLYPHS_PER_PAGE
-                && x > -size
-                && x < self.ink.width + size
-                && y > -size
-                && y < self.ink.height + size
             {
-                let mut glyph = Glyph {
-                    text: ch.text.clone(),
-                    x,
-                    y,
-                    x_end: x + glyph_w * a,
-                    size,
-                    bold: font.bold,
-                    math: font.math,
-                    mcid: self.marked.last().and_then(|m| m.mcid),
-                    artifact: self.marked.last().is_some_and(|m| m.artifact),
-                };
-                if dir == 0 {
-                    self.order(x, glyph.x_end, y, size);
-                    self.ink.glyphs.push(glyph);
-                } else {
-                    let (u, v) =
-                        crate::orient::to_frame(dir, x, y, self.ink.width, self.ink.height);
-                    (glyph.x, glyph.y, glyph.x_end) = (u, v, u + glyph_w * a.hypot(b));
-                    self.ink.turned[usize::from(dir) - 1].push(glyph);
+                let e = tm.0[4] * ctm[0] + tm.0[5] * ctm[2] + ctm[4];
+                let f = tm.0[4] * ctm[1] + tm.0[5] * ctm[3] + ctm[5];
+                let x = e + rise_x;
+                let y = f + rise_y;
+                if x.is_finite() && y.is_finite() && x > -size && x < w_hi && y > -size && y < h_hi
+                {
+                    let glyph_w = ch.width * width_scale;
+                    let mut glyph = Glyph {
+                        text: ch.text.clone(),
+                        x,
+                        y,
+                        x_end: x + glyph_w * a,
+                        size,
+                        bold: font.bold,
+                        math: font.math,
+                        mcid,
+                        artifact,
+                    };
+                    if dir == 0 {
+                        self.order(x, glyph.x_end, y, size);
+                        self.ink.glyphs.push(glyph);
+                    } else {
+                        let (u, v) =
+                            crate::orient::to_frame(dir, x, y, self.ink.width, self.ink.height);
+                        (glyph.x, glyph.y, glyph.x_end) = (u, v, u + glyph_w * ab_len);
+                        self.ink.turned[usize::from(dir) - 1].push(glyph);
+                    }
+                    stored += 1;
                 }
             }
             let mut tx = ch.width * gs.size + gs.char_spacing;
             if ch.is_space {
                 tx += gs.word_spacing;
             }
-            *tm = Matrix::translate(tx * gs.h_scale, 0.0).mul(tm);
+            let dx = tx * gs.h_scale;
+            tm.0[4] += dx * tm.0[0];
+            tm.0[5] += dx * tm.0[1];
+        }
+    }
+
+    /// 1×1 掩码图像被 CTM 拉伸成细长水平或竖直线段时转为 `Rule`（兼容 Ghostscript/dvips 分数线与表线）。
+    fn try_mask_rule(&mut self, ctm: &Matrix) -> bool {
+        let p = [
+            ctm.apply(0.0, 0.0),
+            ctm.apply(1.0, 0.0),
+            ctm.apply(1.0, 1.0),
+            ctm.apply(0.0, 1.0),
+        ];
+        let (mut minx, mut maxx) = (f64::INFINITY, f64::NEG_INFINITY);
+        let (mut miny, mut maxy) = (f64::INFINITY, f64::NEG_INFINITY);
+        for (x, y) in p {
+            if !x.is_finite() || !y.is_finite() {
+                return false;
+            }
+            minx = minx.min(x);
+            maxx = maxx.max(x);
+            miny = miny.min(y);
+            maxy = maxy.max(y);
+        }
+        let (dw, dh) = (maxx - minx, maxy - miny);
+        if dh <= THIN_RECT && dw >= 1.5 && dw > dh {
+            if self.ink.rules.len() < MAX_RULES_PER_PAGE {
+                let y = 0.5 * (miny + maxy);
+                self.ink.rules.push(Rule {
+                    x0: minx,
+                    x1: maxx,
+                    y0: y,
+                    y1: y,
+                });
+            }
+            true
+        } else if dw <= THIN_RECT && dh >= 1.5 && dh > dw {
+            if self.ink.rules.len() < MAX_RULES_PER_PAGE {
+                let x = 0.5 * (minx + maxx);
+                self.ink.rules.push(Rule {
+                    x0: x,
+                    x1: x,
+                    y0: miny,
+                    y1: maxy,
+                });
+            }
+            true
+        } else {
+            false
         }
     }
 
@@ -566,6 +647,17 @@ impl<'a> Interp<'a> {
         };
         match get_name(doc, &stream.dict, b"Subtype") {
             Some(b"Image") => {
+                let is_1x1_mask = !self.text_only
+                    && !gs.fill.white
+                    && matches!(
+                        get(doc, &stream.dict, b"ImageMask"),
+                        Some(Object::Boolean(true))
+                    )
+                    && crate::obj::get_num(doc, &stream.dict, b"Width") == Some(1.0)
+                    && crate::obj::get_num(doc, &stream.dict, b"Height") == Some(1.0);
+                if is_1x1_mask && self.try_mask_rule(&gs.ctm) {
+                    return Ok(());
+                }
                 let id = match xobjects.get(name) {
                     Some(Object::Reference(id)) => Some(ImageSource::Object(*id)),
                     _ => None,
@@ -623,19 +715,45 @@ fn inherited<'a>(doc: &'a Document, page: &'a Dictionary, key: &[u8]) -> Option<
     None
 }
 
-pub(crate) fn page_content(doc: &Document, page: &Dictionary, limit: usize) -> Vec<u8> {
-    let mut out = Vec::new();
-    let parts: Vec<&Object> = match get(doc, page, b"Contents") {
-        Some(Object::Array(a)) => a.iter().collect(),
-        Some(o) => vec![o],
-        None => Vec::new(),
-    };
-    for p in parts {
-        let remaining = limit.saturating_sub(out.len());
-        if let Some(bytes) = stream_bytes(doc, p, remaining) {
-            out.extend_from_slice(&bytes);
-            out.push(b'\n');
-        }
+/// 判断内联图像头部是不是 1×1 图像掩码（Ghostscript/dvips 分数线/表线）。
+fn is_1x1_inline_mask(header: &[u8]) -> bool {
+    // 快速字节预筛：绝大多数内联图片不含 `/IM` 或 `/ImageMask`
+    if !header.windows(3).any(|w| w == b"/IM" || w == b"/Im") {
+        return false;
     }
-    out
+    let dict = crate::file::inline_dict(header);
+    let mask = matches!(
+        dict.get(b"IM").or_else(|| dict.get(b"ImageMask")),
+        Some(Object::Boolean(true))
+    );
+    let w = dict
+        .get(b"W")
+        .or_else(|| dict.get(b"Width"))
+        .and_then(crate::obj::num);
+    let h = dict
+        .get(b"H")
+        .or_else(|| dict.get(b"Height"))
+        .and_then(crate::obj::num);
+    mask && w == Some(1.0) && h == Some(1.0)
+}
+
+pub(crate) fn page_content(doc: &Document, page: &Dictionary, limit: usize) -> Vec<u8> {
+    match get(doc, page, b"Contents") {
+        None => Vec::new(),
+        Some(Object::Array(a)) if a.len() == 1 => {
+            stream_bytes(doc, &a[0], limit).unwrap_or_default()
+        }
+        Some(Object::Array(a)) => {
+            let mut out = Vec::new();
+            for p in a {
+                let remaining = limit.saturating_sub(out.len());
+                if let Some(bytes) = stream_bytes(doc, p, remaining) {
+                    out.extend_from_slice(&bytes);
+                    out.push(b'\n');
+                }
+            }
+            out
+        }
+        Some(o) => stream_bytes(doc, o, limit).unwrap_or_default(),
+    }
 }

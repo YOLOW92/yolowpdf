@@ -82,6 +82,18 @@ impl<'a> Document<'a> {
         filter::decode(&raw, &filters, limit).ok()
     }
 
+    /// 仅取流解码后的前 `prefix` 字节（用于 Type1 字体明文头部，避免解压整段字形轮廓）。
+    pub(crate) fn stream_data_prefix(
+        &self,
+        s: &Stream,
+        prefix: usize,
+        limit: usize,
+    ) -> Option<Vec<u8>> {
+        let raw = self.raw_stream(s)?;
+        let filters = self.filters(s)?;
+        filter::decode_prefix(&raw, &filters, prefix, limit).ok()
+    }
+
     /// 图片流：解密，解掉图像编码层之前的通用过滤器，图像编码层原样留下。
     /// 图像编码层后面还有过滤器（规范不允许）、或通用过滤器解不开时返回 None。
     pub(crate) fn image_data<'s>(&'s self, s: &'s Stream, limit: usize) -> Option<ImageData<'s>> {

@@ -43,7 +43,10 @@ pub(crate) fn is_func_or_op(s: &str) -> bool {
 }
 
 pub(crate) fn is_greek(c: char) -> bool {
-    matches!(c, 'Α'..='Ω' | 'α'..='ω' | 'ϑ' | 'ϕ' | 'ϖ' | 'ϱ' | 'ϵ' | 'ϰ')
+    matches!(
+        c,
+        'Α'..='Ω' | 'α'..='ω' | 'ϑ' | 'ϕ' | 'ϖ' | 'ϱ' | 'ϵ' | 'ϰ' | '∆' | 'Ω'
+    )
 }
 
 pub(crate) fn is_math_symbol(c: char) -> bool {
@@ -57,6 +60,7 @@ pub(crate) fn is_math_symbol(c: char) -> bool {
                 | '⇔'
                 | '↦'
                 | '↪'
+                | '↩'
                 | '⇀'
                 | '↼'
                 | '±'
@@ -65,11 +69,16 @@ pub(crate) fn is_math_symbol(c: char) -> bool {
                 | '÷'
                 | '′'
                 | '″'
+                | '‴'
+                | '‖'
+                | 'Ω'
                 | 'ℝ'
                 | 'ℕ'
                 | 'ℤ'
                 | 'ℚ'
                 | 'ℂ'
+                | 'ℍ'
+                | 'ℙ'
                 | 'ℓ'
                 | '℘'
                 | 'ℵ'
@@ -115,7 +124,14 @@ pub(crate) fn push_char(c: char, kind: MathKind, out: &mut String) {
     }
     if let Some((w, base)) = math_alnum(c) {
         match w {
-            Some(w) => out.push_str(&format!("{w}{{{base}}}")),
+            Some(w) => {
+                let mut inner = String::new();
+                push_char(base, MathKind::Text, &mut inner);
+                out.push_str(w);
+                out.push('{');
+                out.push_str(inner.trim());
+                out.push('}');
+            }
             None => push_char(base, MathKind::Text, out),
         }
         return;
@@ -153,7 +169,7 @@ pub(crate) fn push_char(c: char, kind: MathKind, out: &mut String) {
         'ψ' => "\\psi",
         'ω' => "\\omega",
         'Γ' => "\\Gamma",
-        'Δ' => "\\Delta",
+        'Δ' | '∆' => "\\Delta",
         'Θ' => "\\Theta",
         'Λ' => "\\Lambda",
         'Ξ' => "\\Xi",
@@ -162,7 +178,7 @@ pub(crate) fn push_char(c: char, kind: MathKind, out: &mut String) {
         'Υ' => "\\Upsilon",
         'Φ' => "\\Phi",
         'Ψ' => "\\Psi",
-        'Ω' => "\\Omega",
+        'Ω' | 'Ω' => "\\Omega",
         'Α' => "A",
         'Β' => "B",
         'Ε' => "E",
@@ -197,16 +213,19 @@ pub(crate) fn push_char(c: char, kind: MathKind, out: &mut String) {
         '×' => "\\times",
         '÷' => "\\div",
         '·' | '⋅' => "\\cdot",
-        '∘' | '◦' => "\\circ",
+        '∘' | '◦' | '○' => "\\circ",
         '∗' => "\\ast",
         '⋆' => "\\star",
         '∙' | '•' => "\\bullet",
-        '⋄' => "\\diamond",
+        '⋄' | '◇' => "\\diamond",
         '⊕' => "\\oplus",
         '⊖' => "\\ominus",
         '⊗' => "\\otimes",
         '⊘' => "\\oslash",
         '⊙' => "\\odot",
+        '⊠' => "\\boxtimes",
+        '⊞' => "\\boxplus",
+        '⊟' => "\\boxminus",
         '≤' => "\\leq",
         '≥' => "\\geq",
         '⩽' => "\\leqslant",
@@ -235,6 +254,9 @@ pub(crate) fn push_char(c: char, kind: MathKind, out: &mut String) {
         '≰' => "\\nleq",
         '≱' => "\\ngeq",
         '≁' => "\\nsim",
+        '≄' => "\\not\\simeq",
+        '≇' => "\\not\\cong",
+        '≉' => "\\not\\approx",
         '≢' => "\\not\\equiv",
         '→' | '⟶' => "\\to",
         '←' | '⟵' => "\\leftarrow",
@@ -274,7 +296,9 @@ pub(crate) fn push_char(c: char, kind: MathKind, out: &mut String) {
         '⊊' => "\\subsetneq",
         '⊋' => "\\supsetneq",
         '⊄' => "\\not\\subset",
+        '⊅' => "\\not\\supset",
         '⊈' => "\\nsubseteq",
+        '⊉' => "\\nsupseteq",
         '⊑' => "\\sqsubseteq",
         '⊒' => "\\sqsupseteq",
         '∪' => "\\cup",
@@ -282,7 +306,7 @@ pub(crate) fn push_char(c: char, kind: MathKind, out: &mut String) {
         '⊎' => "\\uplus",
         '⊔' => "\\sqcup",
         '⊓' => "\\sqcap",
-        '∖' => "\\setminus",
+        '∖' | '⧵' => "\\setminus",
         '∅' => "\\emptyset",
         '∀' => "\\forall",
         '∃' => "\\exists",
@@ -304,7 +328,7 @@ pub(crate) fn push_char(c: char, kind: MathKind, out: &mut String) {
         '⋱' => "\\ddots",
         '′' => "'",
         '″' => "''",
-        '∥' => "\\|",
+        '∥' | '‖' => "\\|",
         '∦' => "\\nparallel",
         '∣' => "\\mid",
         '∤' => "\\nmid",
@@ -325,8 +349,8 @@ pub(crate) fn push_char(c: char, kind: MathKind, out: &mut String) {
         '⋊' => "\\rtimes",
         '⋈' => "\\bowtie",
         '⨿' => "\\amalg",
-        '⟨' | '〈' => "\\langle",
-        '⟩' | '〉' => "\\rangle",
+        '⟨' | '〈' | '〈' => "\\langle",
+        '⟩' | '〉' | '〉' => "\\rangle",
         '⌊' => "\\lfloor",
         '⌋' => "\\rfloor",
         '⌈' => "\\lceil",
@@ -345,7 +369,7 @@ pub(crate) fn push_char(c: char, kind: MathKind, out: &mut String) {
         '▷' => "\\triangleright",
         '⊲' => "\\lhd",
         '⊳' => "\\rhd",
-        '□' => "\\square",
+        '□' | '◻' => "\\square",
         '■' | '∎' => "\\blacksquare",
         '♭' => "\\flat",
         '♮' => "\\natural",
@@ -439,13 +463,29 @@ pub(crate) fn math_alnum(c: char) -> Option<(Option<&'static str>, char)> {
         0x1D6A4 => Some((None, 'ı')),
         0x1D6A5 => Some((None, 'ȷ')),
         0x1D6A8..=0x1D7C9 => {
+            let block = (v - 0x1D6A8) / 58;
             let k = (v - 0x1D6A8) % 58;
             let base = match k {
-                0..=24 => char::from_u32(0x391 + k),
+                0..=16 | 18..=24 => char::from_u32(0x391 + k),
+                // Unicode Mathematical Greek 块的第 17 槽是 CAPITAL THETA SYMBOL（U+03A2 为未分配保留位）
+                17 => Some('Θ'),
+                25 => Some('∇'),
                 26..=50 => char::from_u32(0x3B1 + k - 26),
+                51 => Some('∂'),
+                52 => Some('ϵ'),
+                53 => Some('ϑ'),
+                54 => Some('ϰ'),
+                55 => Some('ϕ'),
+                56 => Some('ϱ'),
+                57 => Some('ϖ'),
                 _ => None,
             }?;
-            Some((None, base))
+            // 0=Bold, 1=Italic, 2=BoldItalic, 3=SansBold, 4=SansBoldItalic
+            let style = match block {
+                0 | 2 | 3 | 4 => Some("\\boldsymbol"),
+                _ => None,
+            };
+            Some((style, base))
         }
         _ => None,
     }

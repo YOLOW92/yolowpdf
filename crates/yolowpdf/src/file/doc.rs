@@ -31,10 +31,93 @@ struct Slot {
     cell: OnceCell<Option<Box<Object>>>,
 }
 
+/// 高速 PDF 对象索引表：密集小对象号（`0..65536`）走 O(1) 平坦数组直址，超大稀疏对象号退回 `HashMap`，
+/// 消除每次 `get_object`/`deref` 的 SipHash 开销。
+const FLAT_SLOT_LIMIT: usize = 65_536;
+
+struct SlotTable {
+    flat: Vec<Option<Slot>>,
+    overflow: HashMap<u32, Slot>,
+    count: usize,
+}
+
+impl SlotTable {
+    fn from_entries(entries: Entries) -> Self {
+        let count = entries.len();
+        // 按密度约束平坦数组上限，避免极稀疏畸形 PDF（如仅 2 个对象但对象号为 65535）放大内存分配
+        let flat_cap = FLAT_SLOT_LIMIT.min(count.saturating_mul(4).max(1024));
+        let max_flat = entries
+            .keys()
+            .copied()
+            .filter(|&k| (k as usize) < flat_cap)
+            .max()
+            .map_or(0, |m| m as usize + 1);
+        let mut flat: Vec<Option<Slot>> = (0..max_flat).map(|_| None).collect();
+        let mut overflow = HashMap::new();
+        for (num, entry) in entries {
+            let slot = Slot {
+                entry,
+                cell: OnceCell::new(),
+            };
+            if (num as usize) < max_flat {
+                flat[num as usize] = Some(slot);
+            } else {
+                overflow.insert(num, slot);
+            }
+        }
+        SlotTable {
+            flat,
+            overflow,
+            count,
+        }
+    }
+
+    #[inline]
+    fn get(&self, num: u32) -> Option<&Slot> {
+        let idx = num as usize;
+        if idx < self.flat.len() {
+            self.flat[idx].as_ref()
+        } else {
+            self.overflow.get(&num)
+        }
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.count
+    }
+
+    fn clear_cells_except(&mut self, keep: Option<u32>) {
+        for (i, slot) in self.flat.iter_mut().enumerate() {
+            if Some(i as u32) != keep
+                && let Some(s) = slot
+            {
+                s.cell = OnceCell::new();
+            }
+        }
+        for (&num, slot) in self.overflow.iter_mut() {
+            if Some(num) != keep {
+                slot.cell = OnceCell::new();
+            }
+        }
+    }
+
+    fn keys(&self) -> Vec<u32> {
+        let mut out = Vec::with_capacity(self.count);
+        for (i, slot) in self.flat.iter().enumerate() {
+            if slot.is_some() {
+                out.push(i as u32);
+            }
+        }
+        out.extend(self.overflow.keys().copied());
+        out
+    }
+}
+
 pub(crate) struct Document<'a> {
     pub(super) data: &'a [u8],
     pub(crate) trailer: Dictionary,
-    slots: HashMap<u32, Slot>,
+    slots: SlotTable,
     /// 正在读的对象号：读对象 A 时又要读 A（/Length 指向自己、对象流套自己）就当读不出。
     loading: RefCell<Vec<u32>>,
     pub(super) crypt: Option<Crypt>,
@@ -84,16 +167,7 @@ impl<'a> Document<'a> {
     }
 
     fn new(data: &'a [u8], entries: Entries, trailer: Dictionary, limit: usize) -> Self {
-        let slots = entries
-            .into_iter()
-            .map(|(num, entry)| {
-                let slot = Slot {
-                    entry,
-                    cell: OnceCell::new(),
-                };
-                (num, slot)
-            })
-            .collect();
+        let slots = SlotTable::from_entries(entries);
         Document {
             data,
             trailer,
@@ -140,11 +214,7 @@ impl<'a> Document<'a> {
         };
         let crypt = Crypt::open(&dict, &id0).map_err(|_| OpenError::Encrypted)?;
         // 解密前可能已经缓存了对象（读 /Encrypt 时），都是未解密的，清掉重读；/Encrypt 本身不加密
-        for (num, slot) in self.slots.iter_mut() {
-            if Some(*num) != self.encrypt_ref.map(|r| r.0) {
-                slot.cell = OnceCell::new();
-            }
-        }
+        self.slots.clear_cells_except(self.encrypt_ref.map(|r| r.0));
         self.crypt = Some(crypt);
         Ok(())
     }
@@ -202,7 +272,7 @@ impl<'a> Document<'a> {
 
     /// 按对象号和代号取对象（不跟随引用）。
     pub(crate) fn get_object(&self, id: ObjectId) -> Option<&Object> {
-        let slot = self.slots.get(&id.0)?;
+        let slot = self.slots.get(id.0)?;
         match slot.entry {
             Entry::Free => return None,
             Entry::Offset { generation, .. } if generation != id.1 => return None,
@@ -375,7 +445,7 @@ impl<'a> Document<'a> {
             if other == num || loading.contains(&other) {
                 continue;
             }
-            if let Some(slot) = self.slots.get(&other)
+            if let Some(slot) = self.slots.get(other)
                 && let Entry::Compressed {
                     stream: s2,
                     index: i2,
@@ -414,7 +484,7 @@ impl<'a> Document<'a> {
     /// 后半截里）：文件里所有 `/Type /Page` 的对象按对象号当页面，线性化字典的 /O 指的那页排第一，
     /// /N（或剩下的 /Pages 节点里最大的 /Count）是写入方声明的页数，差额记为丢失的页。
     fn orphan_pages(&self, out: &mut PageTree) {
-        let mut nums: Vec<u32> = self.slots.keys().copied().collect();
+        let mut nums: Vec<u32> = self.slots.keys();
         nums.sort_unstable();
         let mut ids: Vec<ObjectId> = Vec::new();
         let mut first: Option<u32> = None;
@@ -424,7 +494,10 @@ impl<'a> Document<'a> {
             if i % 1024 == 1023 && crate::budget::expired() {
                 break;
             }
-            let generation = match self.slots[&num].entry {
+            let Some(slot) = self.slots.get(num) else {
+                continue;
+            };
+            let generation = match slot.entry {
                 Entry::Offset { generation, .. } => generation,
                 Entry::Compressed { .. } => 0,
                 Entry::Free => continue,

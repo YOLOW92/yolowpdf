@@ -6,7 +6,7 @@ pub(crate) mod truetype;
 pub(crate) mod type1;
 
 use crate::file::{Dictionary, Document, Object};
-use crate::obj::{get, get_num, stream_bytes};
+use crate::obj::{get, get_num, stream_bytes, stream_bytes_prefix};
 use cff::cff;
 use type1::type1;
 
@@ -22,16 +22,34 @@ pub(crate) fn builtin_encoding(
             Object::Stream(s) => get_num(doc, &s.dict, b"Length1"),
             _ => None,
         };
+        fn strip_pfb(b: &[u8]) -> &[u8] {
+            if b.len() > 6 && b[0] == 0x80 && b[1] == 1 {
+                &b[6..]
+            } else {
+                b
+            }
+        }
+        // Type1 的 `/Encoding` 只在明文段 `Length1` 内（通常仅 1–3 KB），前缀解压跳过整段 eexec 字形轮廓；
+        // 若畸形 PDF 的 `Length1` 偏小导致未见到 `/Encoding` 结束标记或 `eexec`，自动回退全量解压防截断。
+        if let Some(n) = length1
+            && n > 0.0
+            && (n as usize) <= limit
+        {
+            let n = n as usize;
+            let want = n.saturating_add(16);
+            let pref = stream_bytes_prefix(doc, obj, want, limit)?;
+            let body = strip_pfb(&pref);
+            let clear = &body[..n.min(body.len())];
+            let complete = type1::find(clear, b"StandardEncoding").is_some()
+                || type1::find(clear, b"readonly def").is_some()
+                || type1::find(clear, b"currentdict end").is_some()
+                || type1::find(clear, b"eexec").is_some();
+            if complete || pref.len() < want {
+                return type1(clear);
+            }
+        }
         let bytes = stream_bytes(doc, obj, limit)?;
-        let clear = match length1 {
-            Some(n) if n > 0.0 && (n as usize) <= bytes.len() => &bytes[..n as usize],
-            _ => &bytes[..],
-        };
-        let clear = if clear.len() > 6 && clear[0] == 0x80 && clear[1] == 1 {
-            &clear[6..]
-        } else {
-            clear
-        };
+        let clear = strip_pfb(&bytes);
         return type1(clear);
     }
     let obj = get(doc, descriptor, b"FontFile3")?;
@@ -52,7 +70,48 @@ dup 0 /minus put\ndup 20 /lessequal put\ndup 50 /element put\nreadonly def\ncurr
         assert_eq!(enc[20].as_deref(), Some("lessequal"));
         assert_eq!(enc[50].as_deref(), Some("element"));
         assert_eq!(enc[1], None);
-        assert!(type1::type1(b"/Encoding StandardEncoding def").is_none());
+        assert_eq!(type1::type1(b"/Encoding StandardEncoding def"), None);
+    }
+
+    #[test]
+    fn type1_malformed_short_length1_falls_back_to_full_stream() {
+        // 构造一个 FlateDecode 压缩的 Type1 FontFile，其 Length1 故意短于 /Encoding 结束位置，
+        // 校验 builtin_encoding 会自动回退全量解压而不截断编码表
+        let clear = b"%!PS-AdobeFont-1.0: TEST10\n/Encoding 256 array\n0 1 255 {1 index exch /.notdef put} for\n\
+dup 10 /alpha put\ndup 99 /omega put\nreadonly def\ncurrentfile eexec\n0123456789abcdef";
+        let compressed = miniz_oxide::deflate::compress_to_vec_zlib(clear, 6);
+        let mut pdf = Vec::new();
+        pdf.extend_from_slice(b"%PDF-1.4\n");
+        let o1 = pdf.len();
+        pdf.extend_from_slice(b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n");
+        let o2 = pdf.len();
+        pdf.extend_from_slice(b"2 0 obj<</Type/Pages/Kids[]/Count 0>>endobj\n");
+        let o3 = pdf.len();
+        pdf.extend_from_slice(
+            format!(
+                "3 0 obj<</Filter/FlateDecode/Length {}/Length1 60>>stream\n",
+                compressed.len()
+            )
+            .as_bytes(),
+        );
+        pdf.extend_from_slice(&compressed);
+        pdf.extend_from_slice(b"\nendstream\nendobj\n");
+        let o4 = pdf.len();
+        pdf.extend_from_slice(b"4 0 obj<</Type/FontDescriptor/FontFile 3 0 R>>endobj\n");
+        let xref = pdf.len();
+        pdf.extend_from_slice(
+            format!(
+                "xref\n0 5\n0000000000 65535 f \n{o1:010} 00000 n \n{o2:010} 00000 n \n{o3:010} 00000 n \n{o4:010} 00000 n \ntrailer<</Size 5/Root 1 0 R>>\nstartxref\n{xref}\n%%EOF\n"
+            )
+            .as_bytes(),
+        );
+        let doc = Document::open(&pdf, 1 << 20).unwrap();
+        let Object::Dictionary(desc) = doc.get_object((4, 0)).unwrap() else {
+            panic!("expected font descriptor dict");
+        };
+        let enc = builtin_encoding(&doc, desc, 1 << 20).unwrap();
+        assert_eq!(enc[10].as_deref(), Some("alpha"));
+        assert_eq!(enc[99].as_deref(), Some("omega"));
     }
 
     #[test]
