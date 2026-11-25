@@ -15,8 +15,8 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-ROOT = Path(os.environ.get("YOLOWPDF_ROOT", Path.home() / "yolowpdf"))
-DATA = Path(os.environ.get("YOLOWPDF_DATA", Path("/mnt/e/yolowpdf-data")))
+ROOT = Path(os.environ.get("YOLOWPDF_ROOT", HERE.parent))
+DATA = Path(os.environ.get("YOLOWPDF_DATA", ROOT.parent / "yolowpdf-data"))
 DATE = time.strftime("%Y-%m-%d")
 OUT = Path(os.environ.get("YOLOWPDF_RESULTS", ROOT / "benchmarks/results" / DATE))
 DRIVER = [sys.executable, "-I", str(HERE / "driver.py")]

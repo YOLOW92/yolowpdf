@@ -1,8 +1,7 @@
 name: Publish
 
-# 推 v* 标签时把 yolowpdf 核心 crate 发到 crates.io。
-# 这次只发代码有变化的核心 crate：OCR、GPU、统计等 crate 保持各自已经发布的版本，
-# 不在这个流程里跟着重发（workspace 版本号变了，但它们的依赖范围仍然覆盖新核心）。
+# 推 v* 标签时把 yolowpdf 和 yolowpdf-ocr 按依赖顺序发到 crates.io。
+# 底层无变动的 crate（yolowpdf-stat、yolowpdf-infer、yolowpdf-gpu、yolowpdf-sys）保持各自已发布的 0.1.x 版本。
 on:
   push:
     tags: ["v*"]
@@ -30,6 +29,7 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
       - uses: dtolnay/rust-toolchain@stable
       - name: Check tag and version
+        id: ver
         shell: bash
         env:
           INPUT_TAG: ${{ inputs.tag }}
@@ -50,10 +50,35 @@ jobs:
               exit 1
             }
           fi
-      - name: Package
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Package yolowpdf
         run: cargo publish -p yolowpdf --locked --dry-run
-      - name: Publish
+      - name: Publish yolowpdf
         if: github.event_name == 'push' || inputs.dry_run == false
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish -p yolowpdf --locked
+      - name: Wait for yolowpdf on crates.io index
+        if: github.event_name == 'push' || inputs.dry_run == false
+        shell: bash
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          for i in $(seq 1 36); do
+            if curl -sf -A "yolowpdf-publish" "https://index.crates.io/yo/lo/yolowpdf" | grep -q "\"vers\":\"$VERSION\""; then
+              echo "yolowpdf $VERSION is live in sparse index"
+              exit 0
+            fi
+            echo "waiting for yolowpdf $VERSION in crates.io index ($i/36)..."
+            sleep 5
+          done
+          echo "timed out waiting for yolowpdf $VERSION in crates.io index" >&2
+          exit 1
+      - name: Package yolowpdf-ocr
+        if: github.event_name == 'push' || inputs.dry_run == false
+        run: cargo publish -p yolowpdf-ocr --locked --dry-run
+      - name: Publish yolowpdf-ocr
+        if: github.event_name == 'push' || inputs.dry_run == false
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p yolowpdf-ocr --locked

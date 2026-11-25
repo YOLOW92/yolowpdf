@@ -25,7 +25,7 @@ use std::path::Path;
 
 use yolowpdf_infer::{Conv2d, Tensor, Weights, ops};
 
-pub use preprocess::{SIZE, preprocess};
+pub use preprocess::{SIZE, preprocess, preprocess_to};
 
 /// [协议] 权重名前缀：`PPFormulaNetForConditionalGeneration.model.encoder`
 const PREFIX: &str = "model.encoder";
@@ -34,18 +34,20 @@ const PREFIX: &str = "model.encoder";
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     pub image_size: usize,
+    pub image_height: usize,
+    pub image_width: usize,
     pub patch_size: usize,
     pub hidden_size: usize,
     pub layers: usize,
     pub heads: usize,
     pub window_size: usize,
     pub global_attn_indexes: Vec<usize>,
+    pub post_conv2_stride: usize,
     pub layer_norm_eps: f32,
 }
 
 impl Config {
-    /// 从 config.json 的 `vision_config` 读。只支持 `use_abs_pos`、`use_rel_pos` 都为真、
-    /// `hidden_act = "gelu"`（PP-FormulaNet_plus-L 就是这样）。
+    /// 从 config.json 的 `vision_config` 读。支持方图（768×768）与矩形图（如 224×672）。
     pub fn from_json(v: &serde_json::Value) -> Result<Config, String> {
         let c = &v["vision_config"];
         let int = |k: &str| {
@@ -71,26 +73,37 @@ impl Config {
                     .ok_or("global_attn_indexes must be integers")
             })
             .collect::<Result<_, _>>()?;
+        let image_size = int("image_size")?;
+        let image_height = c["image_height"]
+            .as_u64()
+            .map_or(image_size, |x| x as usize);
+        let image_width = c["image_width"].as_u64().map_or(image_size, |x| x as usize);
+        let post_conv2_stride = c["post_conv2_stride"].as_u64().map_or(2, |x| x as usize);
         let cfg = Config {
-            image_size: int("image_size")?,
+            image_size,
+            image_height,
+            image_width,
             patch_size: int("patch_size")?,
             hidden_size: int("hidden_size")?,
             layers: int("num_hidden_layers")?,
             heads: int("num_attention_heads")?,
             window_size: int("window_size")?,
             global_attn_indexes,
+            post_conv2_stride,
             layer_norm_eps: c["layer_norm_eps"]
                 .as_f64()
                 .ok_or("vision_config has no layer_norm_eps")? as f32,
         };
-        if cfg.image_size != SIZE {
-            return Err(format!(
-                "preprocessing always outputs {SIZE}, the config says {}",
-                cfg.image_size
-            ));
+        if cfg.patch_size == 0
+            || cfg.image_height == 0
+            || cfg.image_width == 0
+            || !cfg.image_height.is_multiple_of(cfg.patch_size)
+            || !cfg.image_width.is_multiple_of(cfg.patch_size)
+        {
+            return Err("image_height/image_width must be positive multiples of patch_size".into());
         }
-        if cfg.patch_size == 0 || !cfg.image_size.is_multiple_of(cfg.patch_size) {
-            return Err("image_size is not a multiple of patch_size".into());
+        if cfg.post_conv2_stride == 0 {
+            return Err("post_conv2_stride must be positive".into());
         }
         if cfg.heads == 0 || !cfg.hidden_size.is_multiple_of(cfg.heads) {
             return Err("hidden_size is not divisible by the number of heads".into());
@@ -98,9 +111,17 @@ impl Config {
         Ok(cfg)
     }
 
-    /// 特征图边长（768 / 16 = 48）。
+    /// 特征图边长（方图时 768 / 16 = 48）。
     pub fn grid(&self) -> usize {
         self.image_size / self.patch_size
+    }
+
+    /// 特征图网格 `(grid_h, grid_w)`（如 `(14, 42)` 或 `(48, 48)`）。
+    pub fn grid_hw(&self) -> (usize, usize) {
+        (
+            self.image_height / self.patch_size,
+            self.image_width / self.patch_size,
+        )
     }
 }
 
@@ -108,7 +129,7 @@ impl Config {
 pub struct Encoder {
     cfg: Config,
     patch: Conv2d,
-    /// `[grid², hidden]`，与 patch 序列逐元素相加
+    /// `[grid_h·grid_w, hidden]`，与 patch 序列逐元素相加
     pos: Vec<f32>,
     layers: Vec<vit::Layer>,
     neck: neck::Neck,
@@ -124,7 +145,7 @@ impl Encoder {
 
     /// 从已读入的权重建（解码器可共用同一份 [`Weights`]）。用到的参数都复制出来，之后可丢掉 `w`。
     pub fn from_weights(w: &Weights, cfg: Config) -> Result<Encoder, String> {
-        let (g, c) = (cfg.grid(), cfg.hidden_size);
+        let ((gh, gw), c) = (cfg.grid_hw(), cfg.hidden_size);
         let ps = cfg.patch_size;
         let patch = Conv2d::load(
             w,
@@ -135,10 +156,10 @@ impl Encoder {
             1,
         )?;
         let pos = w.get(&format!("{PREFIX}.pos_embed"))?;
-        // [协议] pos_embed 是 [1, grid, grid, hidden]（通道在最后，与序列布局一致）
-        if pos.shape != [1, g, g, c] {
+        // [协议] pos_embed 是 [1, grid_h, grid_w, hidden]（通道在最后，与序列布局一致）
+        if pos.shape != [1, gh, gw, c] {
             return Err(format!(
-                "pos_embed has shape {:?}, expected [1, {g}, {g}, {c}]",
+                "pos_embed has shape {:?}, expected [1, {gh}, {gw}, {c}]",
                 pos.shape
             ));
         }
@@ -154,7 +175,8 @@ impl Encoder {
                 &format!("{PREFIX}.layers.{i}"),
                 cfg.heads,
                 window,
-                g,
+                gh,
+                gw,
                 cfg.layer_norm_eps,
             )?);
         }
@@ -163,7 +185,11 @@ impl Encoder {
             pos: pos.data.clone(),
             layers,
             neck: neck::Neck::load(w, &format!("{PREFIX}.neck"))?,
-            proj: neck::Projector::load(w, &format!("{PREFIX}.multi_modal_projector"))?,
+            proj: neck::Projector::load(
+                w,
+                &format!("{PREFIX}.multi_modal_projector"),
+                cfg.post_conv2_stride,
+            )?,
             cfg,
         })
     }
@@ -172,7 +198,7 @@ impl Encoder {
         &self.cfg
     }
 
-    /// `x` 是 [`preprocess`] 的输出 `[3, 768, 768]`，返回解码器交叉注意力的 memory `[144, 512]`。
+    /// `x` 是 [`preprocess_to`] 的输出 `[3, H, W]`，返回解码器交叉注意力的 memory `[L, d_model]`。
     pub fn encode(&self, x: &Tensor) -> Result<Tensor, String> {
         self.encode_traced(x, |_, _| {})
     }
@@ -183,22 +209,22 @@ impl Encoder {
         x: &Tensor,
         mut trace: impl FnMut(&str, &Tensor),
     ) -> Result<Tensor, String> {
-        let s = self.cfg.image_size;
+        let (ih, iw) = (self.cfg.image_height, self.cfg.image_width);
         // [协议] 输入三通道（`num_channels`）
-        if x.shape != [3, s, s] {
-            return Err(format!("input must be [3, {s}, {s}], got {:?}", x.shape));
+        if x.shape != [3, ih, iw] {
+            return Err(format!("input must be [3, {ih}, {iw}], got {:?}", x.shape));
         }
-        let g = self.cfg.grid();
+        let (gh, gw) = self.cfg.grid_hw();
         let mut h = ops::chw_to_seq(&self.patch.forward(x));
         for (v, p) in h.data.iter_mut().zip(&self.pos) {
             *v += p;
         }
         trace("patch_embed+pos", &h);
         for (i, l) in self.layers.iter().enumerate() {
-            h = l.forward(h, g);
+            h = l.forward(h, gh, gw);
             trace(&format!("layer{i}"), &h);
         }
-        let n = self.neck.forward(&h, g);
+        let n = self.neck.forward(&h, gh, gw);
         trace("neck", &n);
         let m = self.proj.forward(&n);
         trace("projector", &m);

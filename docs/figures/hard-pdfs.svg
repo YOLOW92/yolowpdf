@@ -48,25 +48,25 @@
   <text x="26" y="30" class="title">Stress &amp; Malformed PDF Corpus — pdf.js Test Suite (1,089 Files)</text>
   <text x="26" y="50" class="subtitle">Broken xref tables, truncated streams, encrypted objects, exotic CJK CMaps &amp; pathological layouts</text>
   <rect x="824" y="19" width="194" height="28" rx="14" fill="#1e1b4b" stroke="#6366f1" stroke-width="1"/>
-  <text x="921.0" y="37" text-anchor="middle" class="badge" fill="#e0e7ff">1,663 files/s · 0 Panics</text>
+  <text x="921.0" y="37" text-anchor="middle" class="badge" fill="#e0e7ff">1,126 files/s · 0 Panics</text>
   <rect x="20" y="84" width="493.0" height="188" rx="10" fill="#ffffff" stroke="#e2e8f0" filter="url(#cardShadow)"/>
   <text x="38" y="109" class="panel-title">Throughput (files/s ↑) &amp; Wall Time</text>
   <text x="38" y="127" class="panel-sub">1,089 difficult/corrupt PDFs from the pdf.js test suite</text>
   <rect x="28" y="145" width="477.0" height="28" rx="5" fill="#eef2ff"/>
-  <text x="106" y="163" text-anchor="end" class="label-hi">yolowpdf</text>
+  <text x="106" y="163" text-anchor="end" class="label-hi">yolowpdf 0.2</text>
   <rect x="116" y="150" width="99.0" height="18" rx="4" fill="url(#primaryGrad)"/>
-  <text x="225.0" y="163" class="val-hi">1,663 files/s  (0.496 s wall · 830/1089)</text>
+  <text x="225.0" y="163" class="val-hi">1,126 files/s  (0.737 s wall · 830/1089)</text>
   <text x="106" y="205" text-anchor="end" class="label">pymupdf4llm*</text>
   <rect x="116" y="192" width="8.0" height="18" rx="4" fill="#94a3b8"/>
   <text x="134.0" y="205" class="val">1.31 files/s  (640.9 s wall · 841/1089)</text>
   <text x="38" y="249" class="panel-sub">*pymupdf4llm ran on an NTFS mount (different I/O; not a controlled speed test).</text>
   <rect x="527.0" y="84" width="493.0" height="188" rx="10" fill="#ffffff" stroke="#e2e8f0" filter="url(#cardShadow)"/>
   <text x="545.0" y="109" class="panel-title">Peak Memory (MB ↓) &amp; Resource Safety Guards</text>
-  <text x="545.0" y="127" class="panel-sub">Bounded stream allocations (0.1.1+) &amp; catch_unwind boundary</text>
+  <text x="545.0" y="127" class="panel-sub">Bounded stream allocations &amp; catch_unwind boundary</text>
   <rect x="535.0" y="145" width="477.0" height="28" rx="5" fill="#ecfdf5"/>
-  <text x="632.0" y="163" text-anchor="end" class="label-hi">yolowpdf</text>
+  <text x="632.0" y="163" text-anchor="end" class="label-hi">yolowpdf 0.2</text>
   <rect x="642.0" y="150" width="8.0" height="18" rx="4" fill="url(#tealGrad)"/>
-  <text x="660.0" y="163" class="val-teal">104 MB peak  (39.4x less memory)</text>
+  <text x="660.0" y="163" class="val-teal">102 MB peak  (40.0x less memory)</text>
   <text x="632.0" y="205" text-anchor="end" class="label">pymupdf4llm</text>
   <rect x="642.0" y="192" width="168.0" height="18" rx="4" fill="#94a3b8"/>
   <text x="820.0" y="205" class="val">4,094 MB peak</text>

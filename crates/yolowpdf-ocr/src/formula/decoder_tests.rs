@@ -247,6 +247,41 @@ fn rejects_bad_input() {
     assert!(dec.forward(&[VOCAB as u32], &mut c).is_err());
 }
 
+#[test]
+fn speculative_matches_greedy_bit_for_bit() {
+    for seed in [5u64, 17, 42, 99] {
+        let mut tensors = tiny_tensors(seed);
+        let mut r = Rng(seed + 1000);
+        for k in 0..4 {
+            tensors.push((
+                format!("mtp_heads.{k}.proj.weight"),
+                vec![D, D],
+                r.fill(D * D),
+            ));
+            tensors.push((format!("mtp_heads.{k}.proj.bias"), vec![D], r.fill(D)));
+            tensors.push((format!("mtp_heads.{k}.norm.weight"), vec![D], r.fill(D)));
+            tensors.push((format!("mtp_heads.{k}.norm.bias"), vec![D], r.fill(D)));
+        }
+        let w = Weights::from_bytes(&safetensors(&tensors)).unwrap();
+        let text = json!({
+            "d_model": D, "decoder_attention_heads": HEADS, "decoder_layers": LAYERS,
+            "activation_function": "gelu", "scale_embedding": true, "num_mtp_heads": 4
+        });
+        let generation = json!({
+            "decoder_start_token_id": EOS, "eos_token_id": EOS, "forced_eos_token_id": EOS,
+            "max_length": POSITIONS
+        });
+        let dec = Decoder::from_weights(&w, &text, &generation).unwrap();
+        assert_eq!(dec.num_mtp_heads(), 4);
+        let mem = memory(seed + 50, 7);
+        for ml in [0, 1, 2, 3, 6, 7, 13, POSITIONS] {
+            let greedy = dec.generate_greedy(&mem, ml).unwrap();
+            let spec = dec.generate_speculative(&mem, ml).unwrap();
+            assert_eq!(spec, greedy, "seed={seed} max_len={ml}");
+        }
+    }
+}
+
 /// 真实权重 + 随机 memory：流程能跑、无 NaN、能停。用
 /// `cargo test --profile quick -p yolowpdf-ocr real_weights -- --ignored --nocapture` 跑。
 #[test]

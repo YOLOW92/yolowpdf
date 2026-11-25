@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use yolowpdf_infer::{Tensor, Weights};
 use yolowpdf_ocr::formula::{Decoder, Tokenizer, to_latex};
-use yolowpdf_ocr::formula_enc::{Config, Encoder, preprocess};
+use yolowpdf_ocr::formula_enc::{Config, Encoder, preprocess_to};
 
 /// 最小的 P6 PPM 读取：头是 "P6 宽 高 255"（空白分隔），之后紧跟 RGB 数据。
 fn read_ppm(path: &str) -> yolowpdf_ocr::Image {
@@ -56,8 +56,9 @@ fn main() {
 
     if a.len() == 1 {
         // 固定种子的随机 memory
+        let d = dec.d_model();
         let mut s = 0x9E37_79B9_7F4A_7C15u64;
-        let data = (0..144 * 512)
+        let data = (0..147 * d)
             .map(|_| {
                 s ^= s << 13;
                 s ^= s >> 7;
@@ -65,12 +66,13 @@ fn main() {
                 (s >> 40) as f32 / (1u64 << 23) as f32 - 1.0
             })
             .collect();
-        let mem = Tensor::new(vec![144, 512], data);
+        let mem = Tensor::new(vec![147, d], data);
         let t = Instant::now();
         let ids = dec.generate(&mem, 200).unwrap();
         let ms = t.elapsed().as_secs_f64() * 1e3;
         println!(
-            "随机 memory：{} 个 token，{ms:.0} ms，{:.1} ms/token",
+            "随机 memory（mtp={}）：{} 个 token，{ms:.0} ms，{:.1} ms/token",
+            dec.num_mtp_heads(),
             ids.len(),
             ms / (ids.len() + 1) as f64
         );
@@ -80,8 +82,9 @@ fn main() {
 
     for p in &a[1..] {
         let img = read_ppm(p);
+        let ecfg = enc.config();
         let t = Instant::now();
-        let x = preprocess(&img);
+        let x = preprocess_to(&img, ecfg.image_height, ecfg.image_width);
         let t_pre = t.elapsed().as_secs_f64() * 1e3;
         let t = Instant::now();
         let mem = enc.encode(&x).unwrap();

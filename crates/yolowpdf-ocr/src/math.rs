@@ -5,12 +5,14 @@ use std::path::Path;
 use yolowpdf_infer::Weights;
 
 use crate::formula::{Decoder, Tokenizer, to_latex};
-use crate::formula_enc::{Config, Encoder, preprocess};
+use crate::formula_enc::{Config, Encoder, preprocess_to};
 use crate::layout::{Layout, Region};
 use crate::{Image, Line, read_json};
 
 /// [协议] PP-DocLayoutV3 的 `inference.yml` 里行间公式的细分类名
 const DISPLAY_FORMULA: &str = "display_formula";
+/// [策略] 同类行间公式框的交并比去重阈值：轻量化 3 层解码器可能对同一公式产出多个近乎重合的查询框
+const FORMULA_NMS_IOU: f32 = 0.5;
 
 /// 版面检测加公式识别。
 pub struct Math {
@@ -37,11 +39,11 @@ impl Math {
         })
     }
 
-    /// 这页的行间公式框。
+    /// 这页的行间公式框（按置信度做交并比去重后保持原阅读顺序）。
     pub(crate) fn formula_boxes(&self, page: &Image) -> Result<Vec<Region>, String> {
         let mut regions = self.layout.detect(page)?;
         regions.retain(|r| r.kind == DISPLAY_FORMULA);
-        Ok(regions)
+        Ok(dedup_boxes(regions, FORMULA_NMS_IOU))
     }
 
     /// 认出一个框，得到一行 `$$…$$`；没认出内容时返回 `None`。
@@ -50,7 +52,10 @@ impl Math {
         if crop.width == 0 || crop.height == 0 {
             return Ok(None);
         }
-        let memory = self.encoder.encode(&preprocess(&crop))?;
+        let cfg = self.encoder.config();
+        let memory =
+            self.encoder
+                .encode(&preprocess_to(&crop, cfg.image_height, cfg.image_width))?;
         let ids = self.decoder.generate(&memory, self.decoder.max_length())?;
         let latex = to_latex(&self.tokenizer.decode(&ids));
         let latex = latex.trim();
@@ -92,6 +97,50 @@ pub(crate) fn inside_any(quad: &crate::Quad, boxes: &[Region]) -> bool {
     boxes
         .iter()
         .any(|r| cx >= r.x0 && cx <= r.x1 && cy >= r.y0 && cy <= r.y1)
+}
+
+fn box_iou(a: &Region, b: &Region) -> f32 {
+    let ix0 = a.x0.max(b.x0);
+    let iy0 = a.y0.max(b.y0);
+    let ix1 = a.x1.min(b.x1);
+    let iy1 = a.y1.min(b.y1);
+    let inter = (ix1 - ix0).max(0.0) * (iy1 - iy0).max(0.0);
+    if inter <= 0.0 {
+        return 0.0;
+    }
+    let area_a = (a.x1 - a.x0).max(0.0) * (a.y1 - a.y0).max(0.0);
+    let area_b = (b.x1 - b.x0).max(0.0) * (b.y1 - b.y0).max(0.0);
+    let union = area_a + area_b - inter;
+    if union <= 0.0 { 0.0 } else { inter / union }
+}
+
+/// 同类框按置信度降序做 NMS 去重，保留项恢复原本的阅读顺序。
+fn dedup_boxes(regions: Vec<Region>, iou_thresh: f32) -> Vec<Region> {
+    if regions.len() <= 1 {
+        return regions;
+    }
+    let mut order: Vec<usize> = (0..regions.len()).collect();
+    order.sort_by(|&a, &b| {
+        regions[b]
+            .score
+            .total_cmp(&regions[a].score)
+            .then(a.cmp(&b))
+    });
+    let mut kept_idx: Vec<usize> = Vec::with_capacity(regions.len());
+    for idx in order {
+        if kept_idx
+            .iter()
+            .all(|&k| box_iou(&regions[k], &regions[idx]) <= iou_thresh)
+        {
+            kept_idx.push(idx);
+        }
+    }
+    kept_idx.sort_unstable();
+    let mut slots: Vec<Option<Region>> = regions.into_iter().map(Some).collect();
+    kept_idx
+        .into_iter()
+        .filter_map(|i| slots[i].take())
+        .collect()
 }
 
 #[cfg(test)]
@@ -138,5 +187,17 @@ mod tests {
         };
         assert!(inside_any(&q(15.0, 15.0), &boxes));
         assert!(!inside_any(&q(25.0, 15.0), &boxes));
+    }
+
+    #[test]
+    fn dedup_suppresses_overlapping_lower_score_and_preserves_order() {
+        let mut r0 = region(10.0, 10.0, 110.0, 60.0);
+        r0.score = 0.55;
+        let mut r1 = region(12.0, 11.0, 111.0, 61.0);
+        r1.score = 0.85;
+        let mut r2 = region(10.0, 100.0, 110.0, 150.0);
+        r2.score = 0.70;
+        let out = dedup_boxes(vec![r0, r1.clone(), r2.clone()], FORMULA_NMS_IOU);
+        assert_eq!(out, vec![r1, r2]);
     }
 }

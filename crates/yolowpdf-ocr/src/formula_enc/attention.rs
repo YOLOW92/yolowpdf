@@ -62,16 +62,23 @@ pub(crate) struct Attention {
     qkv: Linear,
     proj: Linear,
     heads: usize,
-    /// 每组的边长（窗口大小，或全局时的特征图边长）
-    side: usize,
-    /// 取好的相对位置 `[side, side, hd]`：高、宽两个方向
+    /// 每组的高、宽（窗口时为 window×window，全局时为 grid_h×grid_w）
+    side_h: usize,
+    side_w: usize,
+    /// 取好的相对位置 `[side_h, side_h, hd]` 与 `[side_w, side_w, hd]`
     rel_h: Vec<f32>,
     rel_w: Vec<f32>,
 }
 
 impl Attention {
-    /// 读 `{p}.qkv`、`{p}.proj`、`{p}.rel_pos_h/w`；`side` 是每组的边长。
-    pub(crate) fn load(w: &Weights, p: &str, heads: usize, side: usize) -> Result<Self, String> {
+    /// 读 `{p}.qkv`、`{p}.proj`、`{p}.rel_pos_h/w`；`(side_h, side_w)` 是每组的高、宽。
+    pub(crate) fn load(
+        w: &Weights,
+        p: &str,
+        heads: usize,
+        side_h: usize,
+        side_w: usize,
+    ) -> Result<Self, String> {
         let qkv = Linear::load(w, &format!("{p}.qkv"))?;
         let proj = Linear::load(w, &format!("{p}.proj"))?;
         let c = proj.weight_t.shape[1];
@@ -81,7 +88,7 @@ impl Attention {
             ));
         }
         let hd = c / heads;
-        let table = |name: &str| -> Result<Vec<f32>, String> {
+        let table = |name: &str, side: usize| -> Result<Vec<f32>, String> {
             let t = w.get(&format!("{p}.{name}"))?;
             if t.shape.len() != 2 || t.shape[1] != hd {
                 return Err(format!("{p}.{name} has shape {:?}, not [L, {hd}]", t.shape));
@@ -89,19 +96,20 @@ impl Attention {
             Ok(rel_pos(&t.data, hd, side, side))
         };
         Ok(Attention {
-            rel_h: table("rel_pos_h")?,
-            rel_w: table("rel_pos_w")?,
+            rel_h: table("rel_pos_h", side_h)?,
+            rel_w: table("rel_pos_w", side_w)?,
             qkv,
             proj,
             heads,
-            side,
+            side_h,
+            side_w,
         })
     }
 
-    /// `x` 是 `[G·side², C]`（G 组叠在一起），返回同形状。
+    /// `x` 是 `[G·side_h·side_w, C]`（G 组叠在一起），返回同形状。
     pub(crate) fn forward(&self, x: &Tensor) -> Tensor {
         let (n, c) = x.tc();
-        let t = self.side * self.side;
+        let t = self.side_h * self.side_w;
         assert_eq!(n % t, 0, "token 数 {n} 不是 {t} 的倍数");
         let groups = n / t;
         let hd = c / self.heads;
@@ -133,7 +141,8 @@ impl Attention {
 
     /// 第 `g` 组第 `h` 头的注意力输出 `[t, hd]`。`parallel` 时 softmax 按行多线程。
     fn head(&self, qkv: &[f32], c: usize, g: usize, h: usize, parallel: bool) -> Vec<f32> {
-        let (s, t) = (self.side, self.side * self.side);
+        let (sh, sw) = (self.side_h, self.side_w);
+        let t = sh * sw;
         let hd = c / self.heads;
         // [协议] scale = head_dim^−0.5
         let scale = (hd as f32).powf(-0.5);
@@ -153,15 +162,15 @@ impl Attention {
         let mut a = ops::matmul(&qs, &kt); // [t, t]
         let row_fn = |i: usize, row: &mut [f32]| {
             let qi = &q[i * hd..(i + 1) * hd];
-            let (y, x) = (i / s, i % s);
+            let (y, x) = (i / sw, i % sw);
             let dot = |r: &[f32]| qi.iter().zip(r).map(|(a, b)| a * b).sum::<f32>();
-            let rh: Vec<f32> = (0..s)
-                .map(|kh| dot(&self.rel_h[(y * s + kh) * hd..(y * s + kh + 1) * hd]))
+            let rh: Vec<f32> = (0..sh)
+                .map(|kh| dot(&self.rel_h[(y * sh + kh) * hd..(y * sh + kh + 1) * hd]))
                 .collect();
-            let rw: Vec<f32> = (0..s)
-                .map(|kw| dot(&self.rel_w[(x * s + kw) * hd..(x * s + kw + 1) * hd]))
+            let rw: Vec<f32> = (0..sw)
+                .map(|kw| dot(&self.rel_w[(x * sw + kw) * hd..(x * sw + kw + 1) * hd]))
                 .collect();
-            for (kh, seg) in row.chunks_exact_mut(s).enumerate() {
+            for (kh, seg) in row.chunks_exact_mut(sw).enumerate() {
                 for (v, r) in seg.iter_mut().zip(&rw) {
                     *v += rh[kh] + r;
                 }
@@ -263,8 +272,8 @@ mod tests {
     /// 照参考实现的公式逐元素算的注意力，不共用被测代码的取头、相对位置和矩阵乘。
     fn naive_attention(a: &Attention, x: &Tensor, hd: usize, tables: (&[f32], &[f32])) -> Vec<f32> {
         let (n, c) = x.tc();
-        let s = a.side;
-        let t = s * s;
+        let (sh, sw) = (a.side_h, a.side_w);
+        let t = sh * sw;
         let scale = (hd as f32).powf(-0.5);
         let mut mid = vec![0f32; n * c];
         for g in 0..n / t {
@@ -274,13 +283,13 @@ mod tests {
             for h in 0..a.heads {
                 let part = |p: usize, i: usize| &qkv[i][p * c + h * hd..p * c + (h + 1) * hd];
                 for i in 0..t {
-                    let (qy, qx) = (i / s, i % s);
+                    let (qy, qx) = (i / sw, i % sw);
                     let q = part(0, i);
                     let mut row: Vec<f32> = (0..t)
                         .map(|j| {
-                            let (ky, kx) = (j / s, j % s);
-                            let rh = &tables.0[(qy + s - 1 - ky) * hd..][..hd];
-                            let rw = &tables.1[(qx + s - 1 - kx) * hd..][..hd];
+                            let (ky, kx) = (j / sw, j % sw);
+                            let rh = &tables.0[(qy + sh - 1 - ky) * hd..][..hd];
+                            let rw = &tables.1[(qx + sw - 1 - kx) * hd..][..hd];
                             let k = part(1, j);
                             (0..hd)
                                 .map(|d| q[d] * scale * k[d] + q[d] * rh[d] + q[d] * rw[d])
@@ -305,32 +314,34 @@ mod tests {
 
     #[test]
     fn 注意力与按定义的逐元素计算一致() {
-        let (c, heads, side) = (8, 2, 3);
+        let (c, heads) = (8, 2);
         let hd = c / heads;
         let mut seed = 7u32;
-        let len = 2 * side - 1;
-        let th = rand_vec(len * hd, &mut seed);
-        let tw = rand_vec(len * hd, &mut seed);
-        let a = Attention {
-            qkv: rand_linear(c, QKV_PARTS * c, &mut seed),
-            proj: rand_linear(c, c, &mut seed),
-            heads,
-            side,
-            rel_h: rel_pos(&th, hd, side, side),
-            rel_w: rel_pos(&tw, hd, side, side),
-        };
-        // groups = 1 走全局路径（逐头、softmax 多线程），groups = 3 走窗口路径（任务并行）
-        for groups in [1, 3] {
-            let n = groups * side * side;
-            let x = Tensor::new(vec![n, c], rand_vec(n * c, &mut seed));
-            let got = a.forward(&x);
-            let want = naive_attention(&a, &x, hd, (&th, &tw));
-            assert_eq!(got.shape, vec![n, c]);
-            for (i, (g, w)) in got.data.iter().zip(&want).enumerate() {
-                assert!(
-                    (g - w).abs() <= 1e-4 * w.abs().max(1.0),
-                    "groups={groups} 第 {i} 个：{g} ≠ {w}"
-                );
+        for (sh, sw) in [(3, 3), (2, 5)] {
+            let th = rand_vec((2 * sh - 1) * hd, &mut seed);
+            let tw = rand_vec((2 * sw - 1) * hd, &mut seed);
+            let a = Attention {
+                qkv: rand_linear(c, QKV_PARTS * c, &mut seed),
+                proj: rand_linear(c, c, &mut seed),
+                heads,
+                side_h: sh,
+                side_w: sw,
+                rel_h: rel_pos(&th, hd, sh, sh),
+                rel_w: rel_pos(&tw, hd, sw, sw),
+            };
+            // groups = 1 走全局路径（逐头、softmax 多线程），groups = 3 走窗口路径（任务并行）
+            for groups in [1, 3] {
+                let n = groups * sh * sw;
+                let x = Tensor::new(vec![n, c], rand_vec(n * c, &mut seed));
+                let got = a.forward(&x);
+                let want = naive_attention(&a, &x, hd, (&th, &tw));
+                assert_eq!(got.shape, vec![n, c]);
+                for (i, (g, w)) in got.data.iter().zip(&want).enumerate() {
+                    assert!(
+                        (g - w).abs() <= 1e-4 * w.abs().max(1.0),
+                        "({sh}x{sw}) groups={groups} 第 {i} 个：{g} ≠ {w}"
+                    );
+                }
             }
         }
     }
@@ -346,7 +357,8 @@ mod tests {
             qkv: rand_linear(c, QKV_PARTS * c, &mut seed),
             proj: rand_linear(c, c, &mut seed),
             heads,
-            side,
+            side_h: side,
+            side_w: side,
             rel_h: rel_pos(&rand_vec(len * hd, &mut seed), hd, side, side),
             rel_w: rel_pos(&rand_vec(len * hd, &mut seed), hd, side, side),
         };

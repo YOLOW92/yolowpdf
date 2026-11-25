@@ -43,12 +43,12 @@ impl Neck {
         })
     }
 
-    /// `[grid², 768]` → `[256, grid, grid]`。
-    pub(crate) fn forward(&self, x: &Tensor, grid: usize) -> Tensor {
+    /// `[grid_h·grid_w, C]` → `[out_c, grid_h, grid_w]`。
+    pub(crate) fn forward(&self, x: &Tensor, grid_h: usize, grid_w: usize) -> Tensor {
         let s = self.ln1.forward(&self.conv1.forward(x));
-        let y = self.conv2.forward(&ops::seq_to_chw(&s, grid, grid));
+        let y = self.conv2.forward(&ops::seq_to_chw(&s, grid_h, grid_w));
         let s = self.ln2.forward(&ops::chw_to_seq(&y));
-        ops::seq_to_chw(&s, grid, grid)
+        ops::seq_to_chw(&s, grid_h, grid_w)
     }
 }
 
@@ -61,12 +61,18 @@ pub(crate) struct Projector {
 }
 
 impl Projector {
-    pub(crate) fn load(w: &Weights, p: &str) -> Result<Projector, String> {
-        // [协议] 两个卷积都是 kernel 3、stride 2、padding 1
-        let conv = |n: &str| Conv2d::load(w, &format!("{p}.{n}"), (2, 2), (1, 1), (1, 1), 1);
+    pub(crate) fn load(w: &Weights, p: &str, conv2_stride: usize) -> Result<Projector, String> {
+        // [协议] conv1 步长 2、padding 1；conv2 步长由 `post_conv2_stride` 定（上游为 2，v2 为 1）
         Ok(Projector {
-            conv1: conv("conv1")?,
-            conv2: conv("conv2")?,
+            conv1: Conv2d::load(w, &format!("{p}.conv1"), (2, 2), (1, 1), (1, 1), 1)?,
+            conv2: Conv2d::load(
+                w,
+                &format!("{p}.conv2"),
+                (conv2_stride, conv2_stride),
+                (1, 1),
+                (1, 1),
+                1,
+            )?,
             lin1: Linear::load(w, &format!("{p}.linear_1"))?,
             lin2: Linear::load(w, &format!("{p}.linear_2"))?,
         })

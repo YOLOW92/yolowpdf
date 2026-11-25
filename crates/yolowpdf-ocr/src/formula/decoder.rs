@@ -49,6 +49,39 @@ pub(super) struct Cache {
     memory_len: usize,
 }
 
+impl Cache {
+    /// 投机验证失配时把自注意力 KV 缓存截回 `keep_len` 个位置（交叉注意力 KV 不变）。
+    fn truncate(&mut self, keep_len: usize, d_model: usize) {
+        let keep = keep_len * d_model;
+        for l in &mut self.layers {
+            l.k.truncate(keep);
+            l.v.truncate(keep);
+        }
+        self.len = keep_len;
+    }
+}
+
+/// 轻量 MTP 投机预测头（`mtp_heads.{k}`）：`norm(h + gelu(proj(h)))`，共享 `lm_head`。
+struct MtpHead {
+    proj: Linear,
+    norm: LayerNorm,
+}
+
+impl MtpHead {
+    fn load(w: &Weights, p: &str) -> Result<MtpHead, String> {
+        Ok(MtpHead {
+            proj: Linear::load(w, &format!("{p}.proj"))?,
+            norm: LayerNorm::load(w, &format!("{p}.norm"), LN_EPS)?,
+        })
+    }
+
+    fn forward(&self, hidden: &Tensor) -> Tensor {
+        let mut h = self.proj.forward(hidden);
+        Activation::Gelu.apply_all(&mut h);
+        self.norm.forward(&ops::add(hidden, &h))
+    }
+}
+
 impl Layer {
     fn load(w: &Weights, p: &str, heads: usize, act: Activation) -> Result<Layer, String> {
         Ok(Layer {
@@ -94,6 +127,8 @@ pub struct Decoder {
     layers: Vec<Layer>,
     layer_norm: LayerNorm,
     lm_head: Linear,
+    /// 可选的多 token 投机头（无损加速，输出与贪心逐 token 完全一致）。
+    mtp_heads: Vec<MtpHead>,
     d_model: usize,
     start: u32,
     eos: u32,
@@ -148,6 +183,10 @@ impl Decoder {
         } else {
             1.0
         };
+        let num_mtp = text["num_mtp_heads"].as_u64().unwrap_or(0) as usize;
+        let mtp_heads = (0..num_mtp)
+            .map(|k| MtpHead::load(w, &format!("mtp_heads.{k}")))
+            .collect::<Result<Vec<_>, _>>()?;
         let token = |key: &str| cfg_usize(generation, key).map(|v| v as u32);
         Ok(Decoder {
             embed_tokens,
@@ -161,6 +200,7 @@ impl Decoder {
             layers,
             layer_norm: LayerNorm::load(w, &format!("{PREFIX}.layer_norm"), LN_EPS)?,
             lm_head: Linear::load(w, "lm_head")?,
+            mtp_heads,
             d_model,
             start: token("decoder_start_token_id")?,
             eos: token("eos_token_id")?,
@@ -174,14 +214,34 @@ impl Decoder {
         self.max_length
     }
 
+    /// 解码器隐维 `d_model`。
+    pub fn d_model(&self) -> usize {
+        self.d_model
+    }
+
+    /// 载入的 MTP 投机头数量（0 表示标准逐 token 贪心解码）。
+    pub fn num_mtp_heads(&self) -> usize {
+        self.mtp_heads.len()
+    }
+
     /// 贪心生成。`memory` 是编码器输出 `[L, d_model]`（参考实现的 `encoder_hidden_states`）。
     ///
+    /// 有 MTP 投机头时自动走无损自投机解码（输出与逐 token 贪心逐位一致）；无投机头时逐 token 解码。
     /// `max_len` 的含义同 `generate(max_length=…)`：序列总长的上限，含起始 token；序列长到
     /// `max_len − 1` 时下一个 token 强制为 `forced_eos_token_id`
     /// （`ForcedEOSTokenLogitsProcessor`）。超过位置向量表的长度时取表长。
     ///
     /// 返回生成的 token，不含起始 token 和结尾的 eos。
     pub fn generate(&self, memory: &Tensor, max_len: usize) -> Result<Vec<u32>, String> {
+        if self.mtp_heads.is_empty() {
+            self.generate_greedy(memory, max_len)
+        } else {
+            self.generate_speculative(memory, max_len)
+        }
+    }
+
+    /// 标准逐 token 贪心生成。
+    pub fn generate_greedy(&self, memory: &Tensor, max_len: usize) -> Result<Vec<u32>, String> {
         let max_len = max_len.min(self.max_positions());
         let mut cache = self.new_cache(memory)?;
         let mut last = self.start;
@@ -198,6 +258,101 @@ impl Decoder {
             }
             out.push(next);
             last = next;
+        }
+        Ok(out)
+    }
+
+    /// 无损 MTP 自投机贪心生成：一次前向批量验证 `1 + K` 个候选 token，结果与 [`Self::generate_greedy`]
+    /// 严格逐 token 一致。
+    pub fn generate_speculative(
+        &self,
+        memory: &Tensor,
+        max_len: usize,
+    ) -> Result<Vec<u32>, String> {
+        let max_len = max_len.min(self.max_positions());
+        let mut cache = self.new_cache(memory)?;
+        let mut out = Vec::new();
+        if max_len <= 1 {
+            return Ok(out);
+        }
+        let h0 = self.forward(&[self.start], &mut cache)?;
+        let mut nxt = match self.forced_eos {
+            Some(f) if 2 == max_len => f,
+            _ => argmax(&self.logits(&h0)?),
+        };
+        if nxt == self.eos {
+            return Ok(out);
+        }
+        out.push(nxt);
+        let mut last_h = h0;
+        let d = self.d_model;
+
+        while 1 + out.len() < max_len {
+            let cur_len = 1 + out.len();
+            let max_draft = (max_len - cur_len).min(1 + self.mtp_heads.len());
+            let mut draft = Vec::with_capacity(max_draft);
+            draft.push(nxt);
+            for head in self.mtp_heads.iter().take(max_draft - 1) {
+                let mh = head.forward(&last_h);
+                let dtok = argmax(&self.logits(&mh)?);
+                draft.push(dtok);
+                if dtok == self.eos {
+                    break;
+                }
+            }
+
+            let past_before = cache.len;
+            let hidden = self.forward(&draft, &mut cache)?;
+            let all_logits = self.lm_head.forward(&hidden);
+            if all_logits.data.iter().any(|v| !v.is_finite()) {
+                return Err("NaN or infinity in the logits".into());
+            }
+            let vocab = all_logits.shape[1];
+
+            let mut matched_all = true;
+            for j in 1..draft.len() {
+                let seq_len = 1 + out.len();
+                let row = &all_logits.data[(j - 1) * vocab..j * vocab];
+                let true_tok = match self.forced_eos {
+                    Some(f) if seq_len + 1 == max_len => f,
+                    _ => argmax(row),
+                };
+                if true_tok == draft[j] {
+                    if true_tok == self.eos {
+                        return Ok(out);
+                    }
+                    out.push(true_tok);
+                } else {
+                    if true_tok == self.eos {
+                        return Ok(out);
+                    }
+                    out.push(true_tok);
+                    nxt = true_tok;
+                    last_h = Tensor::new(vec![1, d], hidden.data[(j - 1) * d..j * d].to_vec());
+                    cache.truncate(past_before + j, d);
+                    matched_all = false;
+                    break;
+                }
+            }
+
+            if matched_all {
+                let seq_len = 1 + out.len();
+                let last_idx = draft.len() - 1;
+                let row = &all_logits.data[last_idx * vocab..(last_idx + 1) * vocab];
+                let bonus = match self.forced_eos {
+                    Some(f) if seq_len + 1 == max_len => f,
+                    _ => argmax(row),
+                };
+                if bonus == self.eos {
+                    return Ok(out);
+                }
+                out.push(bonus);
+                nxt = bonus;
+                last_h = Tensor::new(
+                    vec![1, d],
+                    hidden.data[last_idx * d..(last_idx + 1) * d].to_vec(),
+                );
+            }
         }
         Ok(out)
     }

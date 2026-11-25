@@ -36,38 +36,77 @@ struct Plane {
 
 /// 预处理成 `[3, 768, 768]`。空图给全补边的输出。
 pub fn preprocess(img: &Image) -> Tensor {
-    let n = SIZE * SIZE;
+    preprocess_to(img, SIZE, SIZE)
+}
+
+/// 预处理成 `[3, target_h, target_w]`。
+/// `(768, 768)` 走上游 PP-FormulaNet_plus-L 的两步缩放；其他尺寸（如 YolowFormula-V2 的 `224×672`）
+/// 走等比单步缩放 + 黑边居中填充，与训练脚本 `preprocess_formula_rgb` 一致。
+pub fn preprocess_to(img: &Image, target_h: usize, target_w: usize) -> Tensor {
+    let n = target_h * target_w;
     // [协议] 补边值 0，归一化后为 (0 − mean)/std
     let pad_val = -MEAN / STD;
     let mut out = vec![pad_val; CHANNELS * n];
-    if img.width == 0 || img.height == 0 {
-        return Tensor::new(vec![CHANNELS, SIZE, SIZE], out);
+    if img.width == 0 || img.height == 0 || target_h == 0 || target_w == 0 {
+        return Tensor::new(vec![CHANNELS, target_h, target_w], out);
     }
     let (x0, y0, cw, ch) = crop_box(img);
-    let (mh, mw) = mid_size(ch, cw);
-    let (th, tw) = thumb_size(mh, mw);
     // 灰度图三个通道相同，只算一次
     let planes = if img.channels == 1 { 1 } else { CHANNELS };
-    let (top, left) = ((SIZE - th) / 2, (SIZE - tw) / 2);
-    for c in 0..planes {
-        let mut p = Plane {
-            w: cw,
-            h: ch,
-            data: Vec::with_capacity(cw * ch),
-        };
-        for y in y0..y0 + ch {
-            for x in x0..x0 + cw {
-                p.data.push(img.at(x, y, c));
+    if target_h == SIZE && target_w == SIZE {
+        let (mh, mw) = mid_size(ch, cw);
+        let (th, tw) = thumb_size(mh, mw);
+        let (top, left) = ((SIZE - th) / 2, (SIZE - tw) / 2);
+        for c in 0..planes {
+            let mut p = Plane {
+                w: cw,
+                h: ch,
+                data: Vec::with_capacity(cw * ch),
+            };
+            for y in y0..y0 + ch {
+                for x in x0..x0 + cw {
+                    p.data.push(img.at(x, y, c));
+                }
+            }
+            let p = resize(&p, mh, mw, Filter::Triangle);
+            let p = resize(&p, th, tw, Filter::Cubic);
+            let dst = &mut out[c * n..(c + 1) * n];
+            for (y, row) in p.data.chunks_exact(tw).enumerate() {
+                let at = (top + y) * SIZE + left;
+                for (o, &v) in dst[at..at + tw].iter_mut().zip(row) {
+                    // [协议] rescale 1/255 后按 mean/std 归一化
+                    *o = (f32::from(v) / 255.0 - MEAN) / STD;
+                }
             }
         }
-        let p = resize(&p, mh, mw, Filter::Triangle);
-        let p = resize(&p, th, tw, Filter::Cubic);
-        let dst = &mut out[c * n..(c + 1) * n];
-        for (y, row) in p.data.chunks_exact(tw).enumerate() {
-            let at = (top + y) * SIZE + left;
-            for (o, &v) in dst[at..at + tw].iter_mut().zip(row) {
-                // [协议] rescale 1/255 后按 mean/std 归一化
-                *o = (f32::from(v) / 255.0 - MEAN) / STD;
+    } else {
+        let scale = (target_h as f64 / ch as f64).min(target_w as f64 / cw as f64);
+        let tw = ((cw as f64 * scale).round() as usize).clamp(1, target_w);
+        let th = ((ch as f64 * scale).round() as usize).clamp(1, target_h);
+        let filter = if scale < 1.0 {
+            Filter::Triangle
+        } else {
+            Filter::Cubic
+        };
+        let (top, left) = ((target_h - th) / 2, (target_w - tw) / 2);
+        for c in 0..planes {
+            let mut p = Plane {
+                w: cw,
+                h: ch,
+                data: Vec::with_capacity(cw * ch),
+            };
+            for y in y0..y0 + ch {
+                for x in x0..x0 + cw {
+                    p.data.push(img.at(x, y, c));
+                }
+            }
+            let p = resize(&p, th, tw, filter);
+            let dst = &mut out[c * n..(c + 1) * n];
+            for (y, row) in p.data.chunks_exact(tw).enumerate() {
+                let at = (top + y) * target_w + left;
+                for (o, &v) in dst[at..at + tw].iter_mut().zip(row) {
+                    *o = (f32::from(v) / 255.0 - MEAN) / STD;
+                }
             }
         }
     }
@@ -76,7 +115,7 @@ pub fn preprocess(img: &Image) -> Tensor {
         rest[..n].copy_from_slice(first);
         rest[n..].copy_from_slice(first);
     }
-    Tensor::new(vec![CHANNELS, SIZE, SIZE], out)
+    Tensor::new(vec![CHANNELS, target_h, target_w], out)
 }
 
 /// 裁白边的框 (x0, y0, 宽, 高)：灰度拉伸到 0–255 后小于 200 的像素的外接矩形；
@@ -376,6 +415,32 @@ mod tests {
         // 三个通道相同
         let n = SIZE * SIZE;
         assert_eq!(t.data[..n], t.data[n..2 * n]);
+        assert!(t.data.iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn 矩形预处理保持长宽比并居中补黑边() {
+        // 白底 100×50 黑块（宽高比 2:1），目标 224×672（3:1）：按高缩到 224×448，左右各补 112 列
+        let img = gray(120, 70, |x, y| {
+            if (10..110).contains(&x) && (10..60).contains(&y) {
+                0
+            } else {
+                255
+            }
+        });
+        let t = preprocess_to(&img, 224, 672);
+        assert_eq!(t.shape, vec![3, 224, 672]);
+        let pad = -MEAN / STD;
+        let black = (0.0 - MEAN) / STD;
+        // 左边第 111 列是补边，第 112 列是内容
+        assert_eq!(t.data[100 * 672 + 111], pad);
+        assert!((t.data[100 * 672 + 112] - black).abs() < 1e-6);
+        // 右边第 559 列是内容，第 560 列是补边
+        assert!((t.data[100 * 672 + 559] - black).abs() < 1e-6);
+        assert_eq!(t.data[100 * 672 + 560], pad);
+        let n = 224 * 672;
+        assert_eq!(t.data[..n], t.data[n..2 * n]);
+        assert_eq!(t.data[..n], t.data[2 * n..]);
         assert!(t.data.iter().all(|v| v.is_finite()));
     }
 }

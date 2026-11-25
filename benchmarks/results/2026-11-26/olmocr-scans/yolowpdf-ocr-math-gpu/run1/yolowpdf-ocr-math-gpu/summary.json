@@ -1,0 +1,31 @@
+{
+ "tool": "yolowpdf-ocr-math-gpu",
+ "versions": [
+  "0.1.4"
+ ],
+ "items": 134,
+ "workers_asked": 4,
+ "peak_live_workers": 4,
+ "wall_s": 367.664,
+ "completed": 134,
+ "completion": 1.0,
+ "goodput": 0.364,
+ "status": {
+  "ok": 134
+ },
+ "startup_ms": [
+  364.5,
+  364.7,
+  365.6,
+  367.4
+ ],
+ "max_peak_mb": 938.54,
+ "cap_s": 0.0,
+ "cap_reached": false,
+ "timeout_s": 1800.0,
+ "mem_max_mb": 4096,
+ "sample_us": 1000,
+ "cgroup": true,
+ "mem_low": false,
+ "per_worker_mb": 1400
+}

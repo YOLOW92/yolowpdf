@@ -83,19 +83,24 @@ pub(crate) struct Layer {
 }
 
 impl Layer {
-    /// 读 `{p}.layer_norm1/2`、`{p}.attn`、`{p}.mlp.lin1/2`。`grid` 是特征图边长（全局注意力的组边长）。
+    /// 读 `{p}.layer_norm1/2`、`{p}.attn`、`{p}.mlp.lin1/2`。`(grid_h, grid_w)` 是特征图高、宽。
     pub(crate) fn load(
         w: &Weights,
         p: &str,
         heads: usize,
         window: usize,
-        grid: usize,
+        grid_h: usize,
+        grid_w: usize,
         eps: f32,
     ) -> Result<Layer, String> {
-        let side = if window == 0 { grid } else { window };
+        let (sh, sw) = if window == 0 {
+            (grid_h, grid_w)
+        } else {
+            (window, window)
+        };
         Ok(Layer {
             ln1: LayerNorm::load(w, &format!("{p}.layer_norm1"), eps)?,
-            attn: Attention::load(w, &format!("{p}.attn"), heads, side)?,
+            attn: Attention::load(w, &format!("{p}.attn"), heads, sh, sw)?,
             ln2: LayerNorm::load(w, &format!("{p}.layer_norm2"), eps)?,
             lin1: Linear::load(w, &format!("{p}.mlp.lin1"))?,
             lin2: Linear::load(w, &format!("{p}.mlp.lin2"))?,
@@ -103,18 +108,18 @@ impl Layer {
         })
     }
 
-    /// `x` 是 `[grid², C]`（行优先的 grid×grid 网格），返回同形状。
-    pub(crate) fn forward(&self, x: Tensor, grid: usize) -> Tensor {
+    /// `x` 是 `[grid_h·grid_w, C]`（行优先的 grid_h×grid_w 网格），返回同形状。
+    pub(crate) fn forward(&self, x: Tensor, grid_h: usize, grid_w: usize) -> Tensor {
         let (n, c) = x.tc();
-        assert_eq!(n, grid * grid, "token 数与网格不符");
+        assert_eq!(n, grid_h * grid_w, "token 数与网格不符");
         let normed = self.ln1.forward(&x);
         let attended = if self.window == 0 {
             self.attn.forward(&normed)
         } else {
-            let (wins, padded) = partition(&normed.data, grid, grid, c, self.window);
+            let (wins, padded) = partition(&normed.data, grid_h, grid_w, c, self.window);
             let t = Tensor::new(vec![wins.len() / c, c], wins);
             let a = self.attn.forward(&t);
-            let back = unpartition(&a.data, padded, grid, grid, c, self.window);
+            let back = unpartition(&a.data, padded, grid_h, grid_w, c, self.window);
             Tensor::new(vec![n, c], back)
         };
         let x = ops::add(&x, &attended);

@@ -52,17 +52,19 @@ pub trait PageOcr: Send + Sync + Debug {
 let engine = PdfOcr::from_dirs(det, rec, math_dirs, Device::Cpu)?;
 ```
 
-- `det`: PP-OCRv6 detection model directory.
-- `rec`: PP-OCRv6 recognition model directory.
-- `math_dirs`: optional `(layout, formula)` directories.
+- `det`: text detection model directory (`det_v2` or PP-OCRv6 det).
+- `rec`: text recognition model directory (`rec_v2_multi`, `rec_v2_latin`, or PP-OCRv6 rec).
+- `math_dirs`: optional `(layout, formula)` directories (`layout_s_v2` / `PP-DocLayoutV3` and `formula_v2_rect_mtp` / `PP-FormulaNet_plus-L`).
 - `Device::Cpu` or `Device::Gpu { index }`; a GPU that cannot start falls back to
   CPU and reports why.
 - `PdfOcr::engine()` exposes device status and GPU statistics after use.
 
 Models are not bundled. `crates/yolowpdf-ocr/src/models.rs` pins the Hugging Face
-repositories, revisions, file sizes and SHA-256 for PP-OCRv6 small/medium,
-PP-DocLayoutV3 and PP-FormulaNet_plus-L. Download them into the cache directory
-and verify before use.
+repositories, revisions, file sizes and SHA-256 for both the MIT-licensed
+[`YOLOW92/yolowocr-v2`](https://huggingface.co/YOLOW92/yolowocr-v2) BF16 suite
+(`V2_DET`, `V2_REC_MULTI`, `V2_REC_LATIN`, `V2_LAYOUT`, `V2_FORMULA`) and upstream
+PP-OCRv6 small/medium, PP-DocLayoutV3 and PP-FormulaNet_plus-L. Download them into
+the cache directory and verify before use.
 
 Concurrency is document-level: one `extract_with` call processes one document;
 run multiple calls on multiple threads/processes for throughput. The OCR engine

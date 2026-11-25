@@ -60,9 +60,15 @@ impl Layout {
         let pre =
             preprocess::Preprocess::from_json(&crate::read_json(dir, "preprocessor_config.json")?)?;
         let w = crate::read_weights(dir)?;
-        let kinds = std::fs::read_to_string(dir.join("inference.yml"))
-            .map(|s| config::parse_label_list(&s))
+        let yml = std::fs::read_to_string(dir.join("inference.yml")).ok();
+        let kinds = yml
+            .as_deref()
+            .map(config::parse_label_list)
             .unwrap_or_default();
+        let threshold = yml
+            .as_deref()
+            .and_then(config::parse_draw_threshold)
+            .unwrap_or(SCORE_THRESHOLD);
         Ok(Layout {
             pre,
             // [协议] 权重名前缀
@@ -75,7 +81,7 @@ impl Layout {
                 cfg.labels.clone()
             },
             labels: cfg.labels,
-            threshold: SCORE_THRESHOLD,
+            threshold,
         })
     }
 

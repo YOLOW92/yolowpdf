@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use yolowpdf_infer::Tensor;
 use yolowpdf_ocr::Image;
-use yolowpdf_ocr::formula_enc::{Encoder, preprocess};
+use yolowpdf_ocr::formula_enc::{Encoder, preprocess_to};
 
 /// 最小的 P6 PPM 读取：头是 "P6 宽 高 255"（空白分隔，可有 # 注释），之后紧跟 RGB 数据。
 fn read_ppm(path: &str) -> Image {
@@ -82,8 +82,9 @@ fn main() {
     let enc = Encoder::load(std::path::Path::new(&a[0])).unwrap();
     println!("载入 {:.0} ms", t.elapsed().as_secs_f64() * 1e3);
     let img = a.get(1).map_or_else(synthetic, |p| read_ppm(p));
+    let ecfg = enc.config();
     let t = Instant::now();
-    let x = preprocess(&img);
+    let x = preprocess_to(&img, ecfg.image_height, ecfg.image_width);
     let pre_ms = t.elapsed().as_secs_f64() * 1e3;
     stats("preprocess", &x, pre_ms);
     let t0 = Instant::now();

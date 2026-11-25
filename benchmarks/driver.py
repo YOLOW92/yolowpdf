@@ -27,11 +27,12 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import admit  # noqa: E402
 
-ROOT = Path(os.environ.get("YOLOWPDF_ROOT", Path.home() / "yolowpdf"))
+ROOT = Path(os.environ.get("YOLOWPDF_ROOT", HERE.parent))
 TARGET = Path(os.environ.get("YOLOWPDF_TARGET", ROOT / "target/release"))
 LIGHT_PY = Path(os.environ.get("YOLOWPDF_LIGHT_PY", Path.home() / "pagesift-bench-env/tools/py/bin/python"))
-BENCH = Path(os.environ.get("YOLOWPDF_BENCH", Path.home() / "yolowpdf-bench"))
-DATA = Path(os.environ.get("YOLOWPDF_DATA", Path("/home/yolow92/yolowpdf-data")))
+BENCH = Path(os.environ.get("YOLOWPDF_BENCH", ROOT.parent / "yolowpdf-bench"))
+DATA = Path(os.environ.get("YOLOWPDF_DATA", ROOT.parent / "yolowpdf-data"))
+V2_MODELS = Path(os.environ.get("YOLOWPDF_V2_MODELS", ROOT.parent / "yolowpdf-train/exports/v2_bf16"))
 
 
 def py(tool, venv=None, env=None, **kw):
@@ -49,12 +50,32 @@ def rust_example(name):
 
 
 OCR_ENV = {
-    "YOLOWPDF_OCR_DET": str(Path.home() / ".cache/pagesift/models/PP-OCRv6_small_det_safetensors"),
-    "YOLOWPDF_OCR_REC": str(Path.home() / ".cache/pagesift/models/PP-OCRv6_small_rec_safetensors"),
+    "YOLOWPDF_OCR_DET": os.environ.get("YOLOWPDF_OCR_DET", str(V2_MODELS / "det_v2/best")),
+    "YOLOWPDF_OCR_REC": os.environ.get("YOLOWPDF_OCR_REC", str(V2_MODELS / "rec_v2_multi/best")),
     "PDF_OCR_FORCE": "1",
 }
 OCR_MATH_ENV = {
     **OCR_ENV,
+    "YOLOWPDF_OCR_LAYOUT": os.environ.get("YOLOWPDF_OCR_LAYOUT", str(V2_MODELS / "layout_s_v2_r2/best")),
+    "YOLOWPDF_OCR_FORMULA": os.environ.get("YOLOWPDF_OCR_FORMULA", str(V2_MODELS / "formula_v2_rect_mtp/best")),
+}
+OCR_LATIN_ENV = {
+    "YOLOWPDF_OCR_DET": os.environ.get("YOLOWPDF_OCR_DET", str(V2_MODELS / "det_v2/best")),
+    "YOLOWPDF_OCR_REC": str(V2_MODELS / "rec_v2_latin/best"),
+    "PDF_OCR_FORCE": "1",
+}
+OCR_LATIN_MATH_ENV = {
+    **OCR_LATIN_ENV,
+    "YOLOWPDF_OCR_LAYOUT": os.environ.get("YOLOWPDF_OCR_LAYOUT", str(V2_MODELS / "layout_s_v2_r2/best")),
+    "YOLOWPDF_OCR_FORMULA": os.environ.get("YOLOWPDF_OCR_FORMULA", str(V2_MODELS / "formula_v2_rect_mtp/best")),
+}
+OCR_V1_ENV = {
+    "YOLOWPDF_OCR_DET": str(Path.home() / ".cache/pagesift/models/PP-OCRv6_small_det_safetensors"),
+    "YOLOWPDF_OCR_REC": str(Path.home() / ".cache/pagesift/models/PP-OCRv6_small_rec_safetensors"),
+    "PDF_OCR_FORCE": "1",
+}
+OCR_V1_MATH_ENV = {
+    **OCR_V1_ENV,
     "YOLOWPDF_OCR_LAYOUT": str(Path.home() / ".cache/pagesift/models/PP-DocLayoutV3_safetensors"),
     "YOLOWPDF_OCR_FORMULA": str(Path.home() / ".cache/pagesift/models/PP-FormulaNet_plus-L_safetensors"),
 }
@@ -70,18 +91,26 @@ TOOLS = {
     "docling-gpu": py("docling", venv="docling-gpu", env={"DOCLING_DEVICE": "cuda", "HF_HOME": str(BENCH / "hf")}, per_worker_mb=3200, max_workers=2, startup_s=900),
     "mineru": py("mineru", env={"MINERU_HOME": str(BENCH / "mineru-home")}, per_worker_mb=6000, startup_s=1200),
     "mineru-flash": py("mineru-flash", venv="mineru", env={"MINERU_HOME": str(BENCH / "mineru-home")}, per_worker_mb=2500, startup_s=600),
-    # OCR
-    "yolowpdf-ocr": dict(cmd=rust_example("bench_ocr_worker"), env=OCR_ENV, per_worker_mb=2800, startup_s=180),
-    "yolowpdf-ocr-math": dict(cmd=rust_example("bench_ocr_worker"), env=OCR_MATH_ENV, per_worker_mb=3400, startup_s=300),
-    "yolowpdf-ocr-gpu": dict(cmd=rust_example("bench_ocr_worker"), env={**OCR_ENV, "OCR_DEVICE": "gpu"}, per_worker_mb=3000, max_workers=4, startup_s=300),
-    "yolowpdf-ocr-math-gpu": dict(cmd=rust_example("bench_ocr_worker"), env={**OCR_MATH_ENV, "OCR_DEVICE": "gpu"}, per_worker_mb=3600, max_workers=2, startup_s=420),
+    # OCR (v2 BF16 default)
+    "yolowpdf-ocr": dict(cmd=rust_example("bench_ocr_worker"), env=OCR_ENV, per_worker_mb=800, startup_s=180),
+    "yolowpdf-ocr-math": dict(cmd=rust_example("bench_ocr_worker"), env=OCR_MATH_ENV, per_worker_mb=1200, startup_s=300),
+    "yolowpdf-ocr-gpu": dict(cmd=rust_example("bench_ocr_worker"), env={**OCR_ENV, "OCR_DEVICE": "gpu"}, per_worker_mb=1000, max_workers=4, startup_s=300),
+    "yolowpdf-ocr-math-gpu": dict(cmd=rust_example("bench_ocr_worker"), env={**OCR_MATH_ENV, "OCR_DEVICE": "gpu"}, per_worker_mb=1400, max_workers=4, startup_s=420),
+    "yolowpdf-ocr-latin": dict(cmd=rust_example("bench_ocr_worker"), env=OCR_LATIN_ENV, per_worker_mb=700, startup_s=180),
+    "yolowpdf-ocr-latin-math": dict(cmd=rust_example("bench_ocr_worker"), env=OCR_LATIN_MATH_ENV, per_worker_mb=1100, startup_s=300),
+    "yolowpdf-ocr-latin-gpu": dict(cmd=rust_example("bench_ocr_worker"), env={**OCR_LATIN_ENV, "OCR_DEVICE": "gpu"}, per_worker_mb=900, max_workers=4, startup_s=300),
+    "yolowpdf-ocr-latin-math-gpu": dict(cmd=rust_example("bench_ocr_worker"), env={**OCR_LATIN_MATH_ENV, "OCR_DEVICE": "gpu"}, per_worker_mb=1300, max_workers=4, startup_s=420),
+    # OCR (v1 upstream reference)
+    "yolowpdf-ocr-v1": dict(cmd=rust_example("bench_ocr_worker"), env=OCR_V1_ENV, per_worker_mb=2800, startup_s=180),
+    "yolowpdf-ocr-v1-gpu": dict(cmd=rust_example("bench_ocr_worker"), env={**OCR_V1_ENV, "OCR_DEVICE": "gpu"}, per_worker_mb=3000, max_workers=4, startup_s=300),
+    "yolowpdf-ocr-v1-math-gpu": dict(cmd=rust_example("bench_ocr_worker"), env={**OCR_V1_MATH_ENV, "OCR_DEVICE": "gpu"}, per_worker_mb=3600, max_workers=2, startup_s=420),
     "docling-ocr": py("docling", venv="docling-gpu", env={"DOCLING_DEVICE": "cpu", "HF_HOME": str(BENCH / "hf")}, per_worker_mb=3200, startup_s=900),
     "docling-ocr-gpu": py("docling", venv="docling-gpu", env={"DOCLING_DEVICE": "cuda", "HF_HOME": str(BENCH / "hf")}, per_worker_mb=3200, max_workers=2, startup_s=900),
     "mineru-ocr": py("mineru", env={"MINERU_HOME": str(BENCH / "mineru-home")}, per_worker_mb=5000, startup_s=1200),
     "tesseract": py("tesseract", venv="light", env={
-        "TESSERACT": str(Path.home() / "yolowpdf-bench/tesseract/usr/bin/tesseract"),
-        "LD_LIBRARY_PATH": str(Path.home() / "yolowpdf-bench/tesseract/usr/lib/x86_64-linux-gnu"),
-        "TESSDATA_PREFIX": str(Path.home() / "yolowpdf-bench/tesseract/usr/share/tesseract-ocr/5/tessdata"),
+        "TESSERACT": str(BENCH / "tesseract/usr/bin/tesseract"),
+        "LD_LIBRARY_PATH": str(BENCH / "tesseract/usr/lib/x86_64-linux-gnu"),
+        "TESSDATA_PREFIX": str(BENCH / "tesseract/usr/share/tesseract-ocr/5/tessdata"),
     }, per_worker_mb=700, startup_s=30),
     "paddleocr": py("paddleocr", env={"PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK": "True"}, per_worker_mb=4000, startup_s=600),
 }

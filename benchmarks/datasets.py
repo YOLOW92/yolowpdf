@@ -10,7 +10,7 @@ import argparse
 import json
 from pathlib import Path
 
-DEFAULT_DATA = Path("/home/yolow92/yolowpdf-data")
+DEFAULT_DATA = Path(__file__).resolve().parent.parent.parent / "yolowpdf-data"
 
 
 def olmocr(data: Path, subset: str, out: Path):

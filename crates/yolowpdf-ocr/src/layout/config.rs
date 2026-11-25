@@ -167,15 +167,31 @@ pub fn parse_label_list(yml: &str) -> Vec<String> {
     out
 }
 
+/// inference.yml 里的 `draw_threshold`（若有）。
+pub fn parse_draw_threshold(yml: &str) -> Option<f32> {
+    for line in yml.lines() {
+        if let Some(rest) = line.trim().strip_prefix("draw_threshold:")
+            && let Ok(v) = rest.trim().parse::<f32>()
+            && v.is_finite()
+            && (0.0..=1.0).contains(&v)
+        {
+            return Some(v);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn 读细分类名() {
-        let yml = "arch: DETR\nlabel_list:\n- abstract\n- display_formula\nHpi:\n  x: 1\n";
+        let yml = "arch: DETR\ndraw_threshold: 0.45\nlabel_list:\n- abstract\n- display_formula\nHpi:\n  x: 1\n";
         assert_eq!(parse_label_list(yml), ["abstract", "display_formula"]);
+        assert_eq!(parse_draw_threshold(yml), Some(0.45));
         assert!(parse_label_list("arch: DETR\n").is_empty());
+        assert_eq!(parse_draw_threshold("arch: DETR\n"), None);
     }
 
     #[test]

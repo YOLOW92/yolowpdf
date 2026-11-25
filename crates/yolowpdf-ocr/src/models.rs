@@ -30,12 +30,26 @@ pub struct Model {
 const ORG: &str = "PaddlePaddle";
 
 impl Model {
-    /// 文件的下载地址（`https://huggingface.co/<组织>/<仓库>/resolve/<提交号>/<文件>`）。
+    /// 文件的下载地址：
+    /// - `repo` 不含 `/` 时按上游默认组织拼接：`https://huggingface.co/PaddlePaddle/<repo>/resolve/<rev>/<file>`
+    /// - `repo` 含 `/` 时前两段为 `<org>/<repo>`，其余段为仓库内子目录：
+    ///   `https://huggingface.co/<org>/<repo>/resolve/<rev>/[<subdir>/]<file>`
     pub fn url(&self, file: &File) -> String {
-        format!(
-            "https://huggingface.co/{ORG}/{}/resolve/{}/{}",
-            self.repo, self.revision, file.name
-        )
+        let mut parts = self.repo.splitn(3, '/');
+        match (parts.next(), parts.next(), parts.next()) {
+            (Some(org), Some(repo), Some(sub)) if !sub.is_empty() => format!(
+                "https://huggingface.co/{org}/{repo}/resolve/{}/{sub}/{}",
+                self.revision, file.name
+            ),
+            (Some(org), Some(repo), _) => format!(
+                "https://huggingface.co/{org}/{repo}/resolve/{}/{}",
+                self.revision, file.name
+            ),
+            _ => format!(
+                "https://huggingface.co/{ORG}/{}/resolve/{}/{}",
+                self.repo, self.revision, file.name
+            ),
+        }
     }
 
     /// 本地目录：`<缓存根>/<仓库名>`。
@@ -294,6 +308,146 @@ pub const LAYOUT: Model = Model {
     ],
 };
 
+// [协议] YolowOCR-Suite v2（MIT，自研从零训练 BF16 权重，2026-11-26 发布至 YOLOW92/yolowocr-v2）
+
+/// YolowOCR-Suite v2 锁定提交号。
+const V2_REV: &str = "7cf4d7ae36f1dde30ce492b3dfbbf32460fdd0e7";
+
+/// 自研轻量文字检测（5.05 MB BF16）。
+pub const V2_DET: Model = Model {
+    repo: "YOLOW92/yolowocr-v2/det_v2",
+    revision: V2_REV,
+    files: &[
+        File {
+            name: "model.safetensors",
+            size: 5_053_492,
+            sha256: "b2f88de4dc5493140644f3d0e24caa7789d0509013fef7820e8406685dd0ae86",
+        },
+        File {
+            name: "config.json",
+            size: 1_845,
+            sha256: "f6c244c467ba644c30458713d1c7d21db04fcfcb0c8849f30fc6c18cc15bac9a",
+        },
+        File {
+            name: "preprocessor_config.json",
+            size: 903,
+            sha256: "3623b5618fb94fbb5ea3f6b4d1e490052e30c3ad1c4a35c1d5b1a56dfd3131ca",
+        },
+    ],
+};
+
+/// 自研多语种文字识别（10.74 MB BF16，18,710 字符表）。
+pub const V2_REC_MULTI: Model = Model {
+    repo: "YOLOW92/yolowocr-v2/rec_v2_multi",
+    revision: V2_REV,
+    files: &[
+        File {
+            name: "model.safetensors",
+            size: 10_738_464,
+            sha256: "aeaac2cec0cb546e8c82b9498a05ae1f524db4dd2a451419bacec90b7755ae2c",
+        },
+        File {
+            name: "config.json",
+            size: 1_864,
+            sha256: "20d34208757dea0f7bf16aa3c086f3436b003f287d8bc791c331956978b0d608",
+        },
+        File {
+            name: "preprocessor_config.json",
+            size: 206_202,
+            sha256: "bd7033aae58d809ce01bcfca9c29eae9ae193dd79a69b7233eb1dfa0a9e68a8f",
+        },
+    ],
+};
+
+/// 自研英文/拉丁轻量文字识别（6.24 MB BF16，254 字符表）。
+pub const V2_REC_LATIN: Model = Model {
+    repo: "YOLOW92/yolowocr-v2/rec_v2_latin",
+    revision: V2_REV,
+    files: &[
+        File {
+            name: "model.safetensors",
+            size: 6_235_008,
+            sha256: "889be30a562b22c55bf8be5c24dab8089109fc80e835c2a4f1ec3bf932594b74",
+        },
+        File {
+            name: "config.json",
+            size: 1_862,
+            sha256: "c80b98458557d0d8d4b71818162c618433590c6d4d51099808618b72ab950801",
+        },
+        File {
+            name: "preprocessor_config.json",
+            size: 2_764,
+            sha256: "9a1495170a2efdd0660afff7980d0194dd709385c4ec824086aa0940e338c568",
+        },
+    ],
+};
+
+/// 自研轻量版面检测（26.81 MB BF16，640×640，3 层解码器）。
+pub const V2_LAYOUT: Model = Model {
+    repo: "YOLOW92/yolowocr-v2/layout_s_v2",
+    revision: V2_REV,
+    files: &[
+        File {
+            name: "model.safetensors",
+            size: 26_812_404,
+            sha256: "e5113166f6167a4b2d617f443f785188474bf3ce12b9fc4bfe24888c9159f944",
+        },
+        File {
+            name: "config.json",
+            size: 3_120,
+            sha256: "0b0c58bcf9abe041122493f726e2a8e356f0414dc46d3cae1d38ca1dee388d53",
+        },
+        File {
+            name: "preprocessor_config.json",
+            size: 576,
+            sha256: "84dd88ea533f6321c7ab3da4faad7462c2b5dd8a46e64b533ab08c5679687930",
+        },
+        File {
+            name: "inference.yml",
+            size: 446,
+            sha256: "dd885556a09963173b88ceedf1fb802a08a0828e18d247e45fa06982db790872",
+        },
+    ],
+};
+
+/// 自研矩形公式识别 + MTP-4 无损自投机解码（66.99 MB BF16，224×672）。
+pub const V2_FORMULA: Model = Model {
+    repo: "YOLOW92/yolowocr-v2/formula_v2_rect_mtp",
+    revision: V2_REV,
+    files: &[
+        File {
+            name: "model.safetensors",
+            size: 66_986_280,
+            sha256: "625e92249a37222bb5a48ad40e02419eaaff0225354ef4238795e0810156722b",
+        },
+        File {
+            name: "config.json",
+            size: 1_138,
+            sha256: "2014c62c5bf1c28d8b5cae8c58db2e5e87f724d7c37231747be041a61df2b19d",
+        },
+        File {
+            name: "generation_config.json",
+            size: 168,
+            sha256: "f32c3530b9502ff9f28611b762c9da605e075643f8b023d6bcafb28e60004960",
+        },
+        File {
+            name: "preprocessor_config.json",
+            size: 373,
+            sha256: "22e42e223c2036bc28d0c0636b19091fdda0e55d516a88474dddd80fc5b49786",
+        },
+        File {
+            name: "processor_config.json",
+            size: 373,
+            sha256: "22e42e223c2036bc28d0c0636b19091fdda0e55d516a88474dddd80fc5b49786",
+        },
+        File {
+            name: "tokenizer.json",
+            size: 111_210,
+            sha256: "d1e711af309bcfef0b7783c8192320d45dd7813504cf8b3e527c0040c555ba12",
+        },
+    ],
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,12 +457,43 @@ mod tests {
     fn cached_models_verify() {
         let Some(root) = cache_root() else { return };
         for m in [
-            SMALL_DET, SMALL_REC, MEDIUM_DET, MEDIUM_REC, FORMULA, LAYOUT,
+            SMALL_DET,
+            SMALL_REC,
+            MEDIUM_DET,
+            MEDIUM_REC,
+            FORMULA,
+            LAYOUT,
+            V2_DET,
+            V2_REC_MULTI,
+            V2_REC_LATIN,
+            V2_LAYOUT,
+            V2_FORMULA,
         ] {
             if m.dir(&root).join("model.safetensors").exists() {
                 m.verify(&root).unwrap();
             }
         }
+    }
+
+    #[test]
+    fn resolves_upstream_and_subdir_urls() {
+        assert_eq!(
+            SMALL_DET.url(&SMALL_DET.files[1]),
+            format!(
+                "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_safetensors/resolve/{}/config.json",
+                SMALL_DET.revision
+            )
+        );
+        assert_eq!(
+            V2_DET.url(&V2_DET.files[0]),
+            format!(
+                "https://huggingface.co/YOLOW92/yolowocr-v2/resolve/{V2_REV}/det_v2/model.safetensors"
+            )
+        );
+        assert_eq!(
+            V2_FORMULA.dir(Path::new("/cache")),
+            PathBuf::from("/cache/YOLOW92/yolowocr-v2/formula_v2_rect_mtp")
+        );
     }
 
     #[test]
