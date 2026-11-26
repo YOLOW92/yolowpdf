@@ -4,11 +4,12 @@
 
 **零原生依赖的 Rust PDF → Markdown 解析库与纯 Rust OCR 引擎**
 
-[**English**](../README.md) · [**简体中文**](README.zh-CN.md) · [**API 参考**](API.md) · [**开源模型 (HF)**](https://huggingface.co/YOLOW92/yolowocr-v2) · [**基准测试**](../benchmarks/README.md)
+[**English**](../README.md) · [**简体中文**](README.zh-CN.md) · [**API 参考**](API.md) · [**开源模型 v2**](https://huggingface.co/YOLOW92/yolowocr-v2) · [**开源模型 v3**](https://huggingface.co/YOLOW92/yolowocr-v3) · [**基准测试**](../benchmarks/README.md)
 
 [![Crates.io](https://img.shields.io/crates/v/yolowpdf.svg)](https://crates.io/crates/yolowpdf)
 [![Docs.rs](https://docs.rs/yolowpdf/badge.svg)](https://docs.rs/yolowpdf)
-[![Hugging Face](https://img.shields.io/badge/HuggingFace-YOLOW92%2Fyolowocr--v2-yellow.svg)](https://huggingface.co/YOLOW92/yolowocr-v2)
+[![Hugging Face v2](https://img.shields.io/badge/HuggingFace-YOLOW92%2Fyolowocr--v2-yellow.svg)](https://huggingface.co/YOLOW92/yolowocr-v2)
+[![Hugging Face v3](https://img.shields.io/badge/HuggingFace-YOLOW92%2Fyolowocr--v3-yellow.svg)](https://huggingface.co/YOLOW92/yolowocr-v3)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](../LICENSE)
 [![Rust: 1.89+](https://img.shields.io/badge/rust-1.89%2B-orange.svg)](../Cargo.toml)
 
@@ -24,8 +25,8 @@
 
 ## 一眼看过
 
-- **`yolowpdf`（`0.2.0`）**：PDF 解析、文字提取、递归 X-Y 切分多栏版面重建、表格、原生二维 LaTeX 公式与矩阵重建（`pmatrix`/`cases`/`\binom` + Viterbi HMM 文本/公式切分）、原编码无损图片导出、基于 [`yolow64`](https://crates.io/crates/yolow64) 的 SIMD Base64 Data URL 编码（`PdfImage::data_url`）以及扫描页检测。**不依赖任何模型**。
-- **`yolowpdf-ocr`（`0.2.0`）**：在 CPU 或 NVIDIA CUDA 上纯 Rust 运行的扫描页 OCR 引擎，原生支持 MIT 开源自研模型套件 [**`YolowOCR-Suite v2`**](https://huggingface.co/YOLOW92/yolowocr-v2)（全套 BF16 仅 **109.6 MB**：文字检测、多语/英文识别、`640×640` 版面分析以及 `224×672` 矩形公式识别 + 无损 MTP-4 自投机解码），同时完全兼容上游 `PP-OCRv6` / `PP-DocLayoutV3` / `PP-FormulaNet_plus-L` 权重。
+- **`yolowpdf`（`0.2.1`）**：PDF 解析、文字提取、递归 X-Y 切分多栏版面重建、表格、原生二维 LaTeX 公式与矩阵重建（`pmatrix`/`cases`/`\binom` + Viterbi HMM 文本/公式切分）、原编码无损图片导出、基于 [`yolow64`](https://crates.io/crates/yolow64) **`0.4`**（AVX-512 VBMI/BW、AVX2、NEON）的 SIMD Base64 Data URL 编码（`PdfImage::data_url`）以及扫描页检测。**不依赖任何模型**。
+- **`yolowpdf-ocr`（`0.2.1`）**：在 CPU 或 NVIDIA CUDA 上纯 Rust 运行的扫描页 OCR 引擎，提供统一 4 模型路由（`ModelSuite::{Yolow, Paddle}`、`Quality::{Auto, Fast, Accurate}`、`RecScript::{Multi, Latin}`、`PdfOcrConfig` 链式配置）。默认采用 MIT 开源自研 BF16 模型：[**`YolowOCR-Suite v2`**](https://huggingface.co/YOLOW92/yolowocr-v2)（`Quality::Fast`，全套仅 109.6 MB）与已完整训完的 [**`YolowOCR-Suite v3`**](https://huggingface.co/YOLOW92/yolowocr-v3) 大参数识别器（`rec_v3_large` 44.7 MB / `rec_v3_latin_large` 35.2 MB，接入 `Quality::Accurate`），同时完全兼容上游 `PP-OCRv6` / `PP-DocLayoutV3` / `PP-FormulaNet_plus-L` 权重。
 - **精简 API**：`extract`、`extract_with`，以及 `PageOcr` trait。
 - **宽松许可证且自包含**：运行时依赖均为宽松许可证；PDF 核心没有本地库，也没有模型运行时。
 - **工具链与授权**：Rust 1.89 或更新，edition 2024。MIT 许可证（见 [LICENSE](../LICENSE)、[THIRD-PARTY.md](../THIRD-PARTY.md)、[UPSTREAM.md](../UPSTREAM.md)）。
@@ -54,9 +55,11 @@ yolowpdf-ocr = "0.2"
 
 ---
 
-## 开源模型套件（`YolowOCR-Suite v2`）
+## 开源模型套件（`YolowOCR-Suite v2` 与 `v3`）
 
-全套 5 个从零训练的 BF16 safetensors 模型已按 **MIT 许可证**开源发布至 [**`huggingface.co/YOLOW92/yolowocr-v2`**](https://huggingface.co/YOLOW92/yolowocr-v2)（全套多语仅 **109.6 MB** / 英文轻量版 **105.1 MB**，比上游 892 MB FP32 模型组缩小 **8.1×**）：
+所有从零训练的 BF16 safetensors 模型均按 **MIT 许可证**开源发布于 Hugging Face：
+
+### 1. [`YOLOW92/yolowocr-v2`](https://huggingface.co/YOLOW92/yolowocr-v2) — 完整轻量套件（`Quality::Fast`，全套 109.6 MB）
 
 | 模型目录 | 任务 | 输入尺寸 | 体积（BF16） | 说明 |
 |---|---|---|---:|---|
@@ -66,11 +69,24 @@ yolowpdf-ocr = "0.2"
 | `layout_s_v2/` | 版面分析 | `640×640` | **26.81 MB** | HGNetV2 + 1 层混合编码器 + 3 层 150 查询解码器 |
 | `formula_v2_rect_mtp/` | LaTeX 公式识别 | `224×672` | **66.99 MB** | 8 层矩形 SAM-ViT + 6 层解码器 + 无损 MTP-4（CPU ~3.1–3.5 ms/token） |
 
+### 2. [`YOLOW92/yolowocr-v3`](https://huggingface.co/YOLOW92/yolowocr-v3) — 大参数权重（已训完识别器 + 预览检查点）
+
+| 模型目录 | 任务 | 训练状态 | 体积（BF16） | 说明 |
+|---|---|---|---:|---|
+| `rec_v3_large/` | 多语种文字识别（18,710 字） | **已训完（38.4k 步）** | **44.72 MB** | 已接入 `Quality::Accurate` 默认路由（`det_v2 + rec_v3_large` 使 `old_scans` 从 `0.1692 → 0.1958`，+2.66 pp） |
+| `rec_v3_latin_large/` | 英文/拉丁识别（254 字） | **已训完（18.0k 步）** | **35.20 MB** | 已接入 `Quality::Accurate` + `RecScript::Latin`（`old_scans` 从 `0.1673 → 0.1844`，+1.71 pp） |
+| `det_v3_large/` | 大参数文字检测（`pp_ocrv6_medium_det`，896px） | 未训满预览（6.6k / 24k） | 44.20 MB | 受算力预算截断，当前完整训完的 `det_v2` 实测更快更准 |
+| `layout_l_v3/` | 满血版面分析（`HGNetV2-L`，`800×800`） | 未训满预览（4.3k / 24k） | 67.03 MB | 尚未进入二阶段 `mask_enhanced=ON`；纯文本公式误检框已降 24×（600 → 25），但真实数学页召回偏低 |
+| `formula_v3_pro/` | Pro 公式识别（`256×768`，127M，MTP-4） | 未训满预览（15.8k / 35k） | 255.20 MB | 尚未跑满全程（`mean_sim=0.8227`、`tau=3.94×`）；公式死循环率已降 6.4×（13.5% → 2.1%） |
+
+> **如实说明**：`Quality::Accurate` 默认只启用已完整训完且实测提分的 `rec_v3_large` 与 `rec_v3_latin_large`。其余 3 个受单轮算力预算截断、未训满步数的预览检查点（`det_v3_large`、`layout_l_v3`、`formula_v3_pro`）一并按原样开源在 `YOLOW92/yolowocr-v3`（常量 `V3_DET`、`V3_LAYOUT`、`V3_FORMULA`）供复现与研究参考，暂不进入默认路由。
+
 ```bash
 huggingface-cli download YOLOW92/yolowocr-v2 --local-dir ./yolowocr-v2
+huggingface-cli download YOLOW92/yolowocr-v3 --local-dir ./yolowocr-v3
 ```
 
-`YolowOCR-Suite v2`（`V2_DET`、`V2_REC_MULTI`、`V2_REC_LATIN`、`V2_LAYOUT`、`V2_FORMULA`）及上游 `PP-OCRv6` / `PP-DocLayoutV3` / `PP-FormulaNet_plus-L` 的锁定提交号、文件大小和 SHA-256 均已内置于 `crates/yolowpdf-ocr/src/models.rs`。
+`YolowOCR-Suite v2`（`V2_*`）、`YolowOCR-Suite v3`（`V3_*`）及上游 `PP-OCRv6` / `PP-DocLayoutV3` / `PP-FormulaNet_plus-L` 的锁定提交号、文件大小和 SHA-256 均已内置于 `crates/yolowpdf-ocr/src/models.rs`。
 
 ---
 
@@ -122,18 +138,25 @@ for warning in &doc.warnings {
 
 ```rust
 use std::sync::Arc;
-use yolowpdf_ocr::device::Device;
-use yolowpdf_ocr::pdf::PdfOcr;
+use yolowpdf_ocr::{Device, ModelSuite, Quality, RecScript};
+use yolowpdf_ocr::pdf::{PdfOcr, PdfOcrConfig};
 
-let engine = Arc::new(PdfOcr::from_dirs(
-    "yolowocr-v2/det_v2".into(),       // 或 PP-OCRv6 检测模型目录
-    "yolowocr-v2/rec_v2_multi".into(), // 或 rec_v2_latin / PP-OCRv6 识别模型目录
-    Some((
-        "yolowocr-v2/layout_s_v2".into(),
-        "yolowocr-v2/formula_v2_rect_mtp".into(),
-    )),                                // 或 None（仅文字 OCR）
-    Device::Cpu,                       // 或 Device::Gpu { index: 0 }
-)?);
+// 缓存自动路由（Fast 走 v2 轻量；Accurate 走 det_v2 + rec_v3_large；Auto 按显存自动选）：
+let cfg = PdfOcrConfig::new(cache_root)
+    .suite(ModelSuite::Yolow)    // 或 ModelSuite::Paddle
+    .quality(Quality::Auto)      // Fast | Accurate | Auto
+    .script(RecScript::Multi)    // 或 RecScript::Latin
+    .device(Device::Gpu { index: 0 })
+    .formulas(true);
+let engine = Arc::new(PdfOcr::new(cfg));
+
+// 也可以直接指定本地模型目录：
+// let engine = Arc::new(PdfOcr::from_dirs(
+//     "yolowocr-v2/det_v2".into(),
+//     "yolowocr-v3/rec_v3_large".into(),
+//     Some(("yolowocr-v2/layout_s_v2".into(), "yolowocr-v2/formula_v2_rect_mtp".into())),
+//     Device::Cpu,
+// )?);
 
 let opts = yolowpdf::Options {
     ocr: Some(engine),
@@ -175,19 +198,21 @@ Docling 受时间上限截断，未完成页面在评分时计失败，分数混
   <img src="figures/ocr-bench.svg" alt="yolowpdf-ocr 基准测试" width="100%">
 </p>
 
-| 工具 | 模型与模式 | 完成 ↑ | wall ↓ | 页/s ↑ | 峰值内存 ↓ | 评分 ↑ | 不含 baseline ↑ |
-|:---|:---|---:|---:|---:|---:|---:|---:|
-| **yolowpdf-ocr 0.2** | **v2 英文（11 MB），GPU 纯文字** | **134/134** | **37.562 s** | **3.567** | 628 MB | 0.3891 | 0.0837 |
-| **yolowpdf-ocr 0.2** | **v2 多语（16 MB），GPU 纯文字** | **134/134** | 46.548 s | 2.879 | 665 MB | 0.3897 | 0.0846 |
-| **yolowpdf-ocr 0.2** | **v2 多语（16 MB），CPU 纯文字** | **134/134** | 106.580 s | 1.257 | **593 MB** | 0.3897 | 0.0846 |
-| **yolowpdf-ocr 0.2** | **v2 全套（110 MB），GPU + 公式** | **134/134** | 367.664 s | 0.364 | 939 MB | **0.4799** | **0.2199** |
-| **yolowpdf-ocr 0.2** | **v2 全套（110 MB），CPU + 公式** | **134/134** | 388.367 s | 0.345 | 831 MB | **0.4799** | **0.2199** |
-| yolowpdf-ocr（v1 参考） | 上游（892 MB），GPU + 公式 | 134/134 | 882.395 s | 0.152 | 2,225 MB | 0.5428 | 0.3143 |
-| yolowpdf-ocr（v1 参考） | 上游（31 MB），GPU 纯文字 | 134/134 | 59.675 s | 2.245 | 673 MB | 0.4075 | 0.1112 |
-| Docling OCR GPU（截断） | 默认（上限 154.8 s） | 64/134 | 155.163 s | 0.410 | 4,083 MB | 0.2251 | 0.0989 |
-| Docling OCR CPU（截断） | 默认（上限 154.8 s） | 14/134 | 155.749 s | 0.090 | 2,543 MB | 0.0519 | 0.0257 |
+| 工具 | 模型与模式 | 完成 ↑ | wall ↓ | 页/s ↑ | 峰值内存 ↓ | 评分 ↑ | 不含 baseline ↑ | `old_scans` ↑ |
+|:---|:---|---:|---:|---:|---:|---:|---:|---:|
+| **yolowpdf-ocr 0.2.1** | **高精多语（`det_v2 + rec_v3_large`，50 MB），GPU 纯文字** | **134/134** | 133.684 s | 1.002 | 791 MB | **0.3993** | **0.0990** | **0.1958** |
+| **yolowpdf-ocr 0.2.1** | **高精英文（`det_v2 + rec_v3_latin_large`，40 MB），GPU 纯文字** | **134/134** | 138.021 s | 0.971 | 707 MB | 0.3948 | 0.0922 | 0.1844 |
+| **yolowpdf-ocr 0.2** | **轻量英文（`v2`，11 MB），GPU 纯文字** | **134/134** | **37.562 s** | **3.567** | 628 MB | 0.3891 | 0.0837 | 0.1673 |
+| **yolowpdf-ocr 0.2** | **轻量多语（`v2`，16 MB），GPU 纯文字** | **134/134** | 46.548 s | 2.879 | 665 MB | 0.3897 | 0.0846 | 0.1692 |
+| **yolowpdf-ocr 0.2** | **轻量多语（`v2`，16 MB），CPU 纯文字** | **134/134** | 106.580 s | 1.257 | **593 MB** | 0.3897 | 0.0846 | 0.1692 |
+| **yolowpdf-ocr 0.2** | **v2 全套（110 MB），GPU + 公式** | **134/134** | 367.664 s | 0.364 | 939 MB | **0.4799** | **0.2199** | 0.1559 |
+| **yolowpdf-ocr 0.2** | **v2 全套（110 MB），CPU + 公式** | **134/134** | 388.367 s | 0.345 | 831 MB | **0.4799** | **0.2199** | 0.1559 |
+| yolowpdf-ocr（v1 参考） | 上游（892 MB），GPU + 公式 | 134/134 | 882.395 s | 0.152 | 2,225 MB | 0.5428 | 0.3143 | 0.2224 |
+| yolowpdf-ocr（v1 参考） | 上游（31 MB），GPU 纯文字 | 134/134 | 59.675 s | 2.245 | 673 MB | 0.4075 | 0.1112 | 0.2224 |
+| Docling OCR GPU（截断） | 默认（上限 154.8 s） | 64/134 | 155.163 s | 0.410 | 4,083 MB | 0.2251 | 0.0989 | 0.1977 |
+| Docling OCR CPU（截断） | 默认（上限 154.8 s） | 14/134 | 155.749 s | 0.090 | 2,543 MB | 0.0519 | 0.0257 | 0.0513 |
 
-相比 892 MB 上游 FP32 参考模型组，110 MB 的 MIT 开源 `YolowOCR-Suite v2` 在 GPU 含版面与公式模式下提速 **2.40×**（367.7 s vs 882.4 s）、单 worker 峰值内存降低 **58%**（939 MB vs 2,225 MB）；纯 CPU 含公式模式（388.4 s，831 MB）也比上一代 GPU 含公式快 **2.27×**。两者得分差异（`0.4799` vs `0.5428`）的逐项归因记录在 [2026-11-26 报告](../benchmarks/results/2026-11-26/report.md)；若更看重最高分数而非体积与速度，可直接将上游 `PP-OCRv6` / `PP-DocLayoutV3` / `PP-FormulaNet_plus-L` 目录传给同一 `PdfOcr::from_dirs` 接口。
+在 0.2.1 中，已训完的 `rec_v3_large`（44.7 MB）搭配 `det_v2`（5.05 MB）将历史扫描文本（`old_scans`）通过率提升 **+2.66 pp**（`0.1692 → 0.1958`），几乎追平 Docling OCR GPU（`0.1977`），且完成率 `100%`（vs `47.8%`）、内存仅 `791 MB`（vs `4,083 MB`）；`rec_v3_latin_large` 将拉丁文本识别提升 **+1.71 pp**（`0.1673 → 0.1844`）。相比 892 MB 上游 FP32 参考模型组，110 MB 的 MIT 开源 `YolowOCR-Suite v2` 在 GPU 含版面与公式模式下提速 **2.40×**（367.7 s vs 882.4 s）、峰值内存降低 **58%**（939 MB vs 2,225 MB）。完整实测（含未训满的 v3 预览检查点 `det_v3_large`、`layout_l_v3`、`formula_v3_pro`）记录在 [2026-11-27 报告](../benchmarks/results/2026-11-27/report.md) 与 [2026-11-26 报告](../benchmarks/results/2026-11-26/report.md)；若更看重最高公式精度，可通过 `PdfOcrConfig::new(...).suite(ModelSuite::Paddle)` 切换上游模型组。
 
 ### 3. 难题 PDF：`pdf.js` 语料库（1,089 份）
 
@@ -235,7 +260,8 @@ Docling 受时间上限截断，未完成页面在评分时计失败，分数混
 
 - 方法和命令：[`benchmarks/README.md`](../benchmarks/README.md)
 - 工具版本和环境：[`benchmarks/tools.lock.md`](../benchmarks/tools.lock.md)
-- 最新 0.2.0 / v2 实测结果与报告：[`benchmarks/results/2026-11-26/`](../benchmarks/results/2026-11-26/report.md)
+- 最新 0.2.1 / v3 OCR 实测结果与报告：[`benchmarks/results/2026-11-27/`](../benchmarks/results/2026-11-27/report.md)
+- 0.2.0 / v2 实测结果与报告：[`benchmarks/results/2026-11-26/`](../benchmarks/results/2026-11-26/report.md)
 - 上一轮 0.1.2 / 竞品基线结果：[`benchmarks/results/2026-11-09/`](../benchmarks/results/2026-11-09/report.md)
 - SVG 图表生成脚本：[`benchmarks/figures/generate.py`](../benchmarks/figures/generate.py)
 - 数据只下载、不再分发：olmOCR-bench（ODC-BY 1.0，官方评分代码 Apache-2.0）和 `pdf.js` 测试集（Apache-2.0）。

@@ -16,26 +16,78 @@ pub fn to_latex(text: &str) -> String {
     render_safe(&normalize(&remove_chinese_text_wrapping(text)))
 }
 
-/// 参考实现之外的一步：模型会输出 `\textlangle`、`\textrangle`，KaTeX 不认，整个公式渲染失败；
-/// 换成数学模式下同一个符号。
+/// 参考实现之外的一步：
+/// 1. 替换 KaTeX 不认识的宏（`\textlangle`/`\textrangle` → `\langle`/`\rangle`，`\boldmath` → `\mathbf`）；
+/// 2. 折叠连续 3 次以上的空白命令（`\qquad` / `\quad` / `\ `）并去掉尾部纯空白命令，防止解码退化循环破坏渲染。
 fn render_safe(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
-    while let Some(i) = rest.find("\\text") {
+    while let Some(i) = rest.find('\\') {
         let (head, tail) = rest.split_at(i);
         out.push_str(head);
         let word = tail[1..]
             .find(|c: char| !c.is_ascii_alphabetic())
             .map_or(tail.len(), |n| n + 1);
+        if word == 1 {
+            // 非字母转义命令（如 `\ `、`\,`、`\\`），原样推进两个字符或一个反斜杠
+            let next_len = tail[1..].chars().next().map_or(1, |c| 1 + c.len_utf8());
+            out.push_str(&tail[..next_len]);
+            rest = &tail[next_len..];
+            continue;
+        }
         out.push_str(match &tail[..word] {
             "\\textlangle" => "\\langle",
             "\\textrangle" => "\\rangle",
+            "\\boldmath" => "\\mathbf",
             other => other,
         });
         rest = &tail[word..];
     }
     out.push_str(rest);
-    out
+    collapse_spacing_runs(&out)
+}
+
+/// 折叠 3 次以上重复的 `\qquad` / `\quad` / `\ `，并裁剪公式末尾的纯空白命令。
+fn collapse_spacing_runs(s: &str) -> String {
+    let mut cur = s.to_owned();
+    for pat in ["\\qquad", "\\quad", "\\ "] {
+        let triple = format!("{pat}{pat}{pat}");
+        if !cur.contains(&triple) {
+            continue;
+        }
+        let mut next = String::with_capacity(cur.len());
+        let mut rest = cur.as_str();
+        while let Some(i) = rest.find(pat) {
+            next.push_str(&rest[..i]);
+            let mut after = &rest[i..];
+            let mut count = 0usize;
+            while let Some(stripped) = after.strip_prefix(pat) {
+                count += 1;
+                after = stripped.trim_start_matches(' ');
+            }
+            if count >= 3 {
+                next.push_str(pat);
+            } else {
+                for _ in 0..count {
+                    next.push_str(pat);
+                }
+            }
+            rest = after;
+        }
+        next.push_str(rest);
+        cur = next;
+    }
+    let mut trimmed = cur.trim_end();
+    loop {
+        let before = trimmed;
+        for suf in ["\\qquad", "\\quad", "\\ "] {
+            trimmed = trimmed.strip_suffix(suf).unwrap_or(trimmed).trim_end();
+        }
+        if trimmed.len() == before.len() {
+            break;
+        }
+    }
+    trimmed.to_owned()
 }
 
 /// Python `re` 的 `\s`（Unicode 空白；str 模式下还含 U+001C–U+001F）。
@@ -260,8 +312,12 @@ mod tests {
     #[test]
     fn replaces_symbols_katex_rejects() {
         assert_eq!(
-            render_safe(r"\textlangle x \textrangle + \textbf{a} \textlangles"),
-            r"\langle x \rangle + \textbf{a} \textlangles"
+            render_safe(r"\textlangle x \textrangle + \textbf{a} \boldmath{b} \textlangles"),
+            r"\langle x \rangle + \textbf{a} \mathbf{b} \textlangles"
+        );
+        assert_eq!(
+            render_safe(r"x=1\qquad\qquad\qquad\qquad + y\quad\quad\quad"),
+            r"x=1\qquad+ y"
         );
     }
 

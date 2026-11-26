@@ -448,6 +448,148 @@ pub const V2_FORMULA: Model = Model {
     ],
 };
 
+// [协议] YolowOCR-Suite v3（MIT，自研大参数 BF16 权重，2026-11-27 发布至 YOLOW92/yolowocr-v3）
+// 其中 rec_v3_large（38.4k 步）与 rec_v3_latin_large（18k 步）已完整训完并接入默认高精档；
+// det_v3_large（6.6k/24k）、layout_l_v3（4.3k/24k）、formula_v3_pro（15.8k/35k）为未训满预览检查点。
+
+/// YolowOCR-Suite v3 锁定提交号。
+const V3_REV: &str = "b45edbf6feeb7a2f576dc40bbb8b16451c0f45b1";
+
+/// 自研高精多语种文字识别（44.72 MB BF16，LCNetV4-L + 4L SVTR h=256，18,710 字符表，已完整训完）。
+pub const V3_REC_MULTI: Model = Model {
+    repo: "YOLOW92/yolowocr-v3/rec_v3_large",
+    revision: V3_REV,
+    files: &[
+        File {
+            name: "model.safetensors",
+            size: 44_722_472,
+            sha256: "240977353edb7cf91418f344e34a486a09bc8188ec2bef35113b140adbede54a",
+        },
+        File {
+            name: "config.json",
+            size: 1_992,
+            sha256: "f9d367f34312d6ec068d395a8649894c24856281eac761bd3e157b20d6f22fcd",
+        },
+        File {
+            name: "preprocessor_config.json",
+            size: 206_202,
+            sha256: "bd7033aae58d809ce01bcfca9c29eae9ae193dd79a69b7233eb1dfa0a9e68a8f",
+        },
+    ],
+};
+
+/// 自研高精英文/拉丁文字识别（35.20 MB BF16，LCNetV4-L + 4L SVTR h=256，254 字符表，已完整训完）。
+pub const V3_REC_LATIN: Model = Model {
+    repo: "YOLOW92/yolowocr-v3/rec_v3_latin_large",
+    revision: V3_REV,
+    files: &[
+        File {
+            name: "model.safetensors",
+            size: 35_199_064,
+            sha256: "fc453cc01ad248801a27561ddbde559c46636e6934e3ce5e2f2d1a48ad4b4e08",
+        },
+        File {
+            name: "config.json",
+            size: 1_990,
+            sha256: "1aeb2b276a5724e2683441626871ff2e2ee8eb39c5fddab5fb67151daef59848",
+        },
+        File {
+            name: "preprocessor_config.json",
+            size: 2_764,
+            sha256: "9a1495170a2efdd0660afff7980d0194dd709385c4ec824086aa0940e338c568",
+        },
+    ],
+};
+
+/// 自研大参数文字检测预览检查点（44.20 MB BF16，6.6k/24k 步，未训满）。
+pub const V3_DET: Model = Model {
+    repo: "YOLOW92/yolowocr-v3/det_v3_large",
+    revision: V3_REV,
+    files: &[
+        File {
+            name: "model.safetensors",
+            size: 44_204_012,
+            sha256: "fa80a4a03f15b0d959531868751c506e0ab3ae31271f7d45e2a6d62d1ed80c64",
+        },
+        File {
+            name: "config.json",
+            size: 3_747,
+            sha256: "17e73e68fa867462ff3c013df28f7ad0087efeee87dfe848bd817f4fe055d8c1",
+        },
+        File {
+            name: "preprocessor_config.json",
+            size: 903,
+            sha256: "3623b5618fb94fbb5ea3f6b4d1e490052e30c3ad1c4a35c1d5b1a56dfd3131ca",
+        },
+    ],
+};
+
+/// 自研满血版面检测预览检查点（67.03 MB BF16，800×800，4.3k/24k 步，未训满）。
+pub const V3_LAYOUT: Model = Model {
+    repo: "YOLOW92/yolowocr-v3/layout_l_v3",
+    revision: V3_REV,
+    files: &[
+        File {
+            name: "model.safetensors",
+            size: 67_034_116,
+            sha256: "f5a82712c8bf515db5058a522cebb1b7d2166e0b7f69106b6b5e2a04909ac4af",
+        },
+        File {
+            name: "config.json",
+            size: 2_568,
+            sha256: "779f68204df00965006c1251c6ae9185dd8d58d982795e0c136cde9c9ecba613",
+        },
+        File {
+            name: "preprocessor_config.json",
+            size: 576,
+            sha256: "7b3b2030cc6ad3bbc67d4a80377e9d75c8dad45d49d01df260de214bdf7ce5d5",
+        },
+        File {
+            name: "inference.yml",
+            size: 446,
+            sha256: "697b475edc9a06ed30629fedc329f09b13100fac83b9e13aaf138ebc03f1cda0",
+        },
+    ],
+};
+
+/// 自研 127M Pro 公式识别预览检查点（255.20 MB BF16，256×768 + MTP-4，15.8k/35k 步，未训满）。
+pub const V3_FORMULA: Model = Model {
+    repo: "YOLOW92/yolowocr-v3/formula_v3_pro",
+    revision: V3_REV,
+    files: &[
+        File {
+            name: "model.safetensors",
+            size: 255_195_152,
+            sha256: "cdd66cfa8b89dfd0d947471ff4f55a1d48f8fba809c55727e9c5796afb01afe2",
+        },
+        File {
+            name: "config.json",
+            size: 1_159,
+            sha256: "3a34a736b856e7f6cd5c451812cddbb8321c752e4d38ec99d5c0de729d6e9380",
+        },
+        File {
+            name: "generation_config.json",
+            size: 168,
+            sha256: "f32c3530b9502ff9f28611b762c9da605e075643f8b023d6bcafb28e60004960",
+        },
+        File {
+            name: "preprocessor_config.json",
+            size: 373,
+            sha256: "6b07fbe6898f8aca0036be76c805d47dd3f1bf84c3e5318d8d035e51dcf798ff",
+        },
+        File {
+            name: "processor_config.json",
+            size: 373,
+            sha256: "6b07fbe6898f8aca0036be76c805d47dd3f1bf84c3e5318d8d035e51dcf798ff",
+        },
+        File {
+            name: "tokenizer.json",
+            size: 111_210,
+            sha256: "d1e711af309bcfef0b7783c8192320d45dd7813504cf8b3e527c0040c555ba12",
+        },
+    ],
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -468,6 +610,11 @@ mod tests {
             V2_REC_LATIN,
             V2_LAYOUT,
             V2_FORMULA,
+            V3_REC_MULTI,
+            V3_REC_LATIN,
+            V3_DET,
+            V3_LAYOUT,
+            V3_FORMULA,
         ] {
             if m.dir(&root).join("model.safetensors").exists() {
                 m.verify(&root).unwrap();
@@ -488,6 +635,12 @@ mod tests {
             V2_DET.url(&V2_DET.files[0]),
             format!(
                 "https://huggingface.co/YOLOW92/yolowocr-v2/resolve/{V2_REV}/det_v2/model.safetensors"
+            )
+        );
+        assert_eq!(
+            V3_REC_MULTI.url(&V3_REC_MULTI.files[0]),
+            format!(
+                "https://huggingface.co/YOLOW92/yolowocr-v3/resolve/{V3_REV}/rec_v3_large/model.safetensors"
             )
         );
         assert_eq!(

@@ -46,25 +46,46 @@ pub trait PageOcr: Send + Sync + Debug {
 }
 ```
 
-`yolowpdf_ocr::pdf::PdfOcr` implements it:
+`yolowpdf_ocr::pdf::PdfOcr` implements it, with two entry points:
+
+1. **Managed cache & tier routing** (recommended — defaults to the MIT `ModelSuite::Yolow` BF16 suite, with `Quality::{Auto, Fast, Accurate}`, `RecScript::{Multi, Latin}`, and optional `ModelSuite::Paddle` upstream compatibility):
+
+```rust
+use yolowpdf_ocr::{Device, ModelSuite, Quality, RecScript};
+use yolowpdf_ocr::pdf::{PdfOcr, PdfOcrConfig};
+
+let cfg = PdfOcrConfig::new(cache_root)
+    .suite(ModelSuite::Yolow)
+    .quality(Quality::Auto)
+    .script(RecScript::Multi) // or RecScript::Latin for English/European scans
+    .device(Device::Gpu { index: 0 })
+    .formulas(true);
+let choice = cfg.selected_models(); // unified { det, rec, layout, formula }
+let engine = PdfOcr::new(cfg);
+```
+
+2. **Explicit local directories** (benchmarking or custom fine-tuned weights such as `rec_v3_large` / `formula_v3_pro`):
 
 ```rust
 let engine = PdfOcr::from_dirs(det, rec, math_dirs, Device::Cpu)?;
 ```
 
-- `det`: text detection model directory (`det_v2` or PP-OCRv6 det).
-- `rec`: text recognition model directory (`rec_v2_multi`, `rec_v2_latin`, or PP-OCRv6 rec).
-- `math_dirs`: optional `(layout, formula)` directories (`layout_s_v2` / `PP-DocLayoutV3` and `formula_v2_rect_mtp` / `PP-FormulaNet_plus-L`).
+- `det`: text detection model directory (`det_v2`, `det_v3_large`, or PP-OCRv6 det).
+- `rec`: text recognition model directory (`rec_v2_multi`, `rec_v2_latin`, `rec_v3_large`, `rec_v3_latin_large`, or PP-OCRv6 rec).
+- `math_dirs`: optional `(layout, formula)` directories (`layout_s_v2` / `layout_l_v3` / `PP-DocLayoutV3` and `formula_v2_rect_mtp` / `formula_v3_pro` / `PP-FormulaNet_plus-L`).
 - `Device::Cpu` or `Device::Gpu { index }`; a GPU that cannot start falls back to
   CPU and reports why.
 - `PdfOcr::engine()` exposes device status and GPU statistics after use.
 
 Models are not bundled. `crates/yolowpdf-ocr/src/models.rs` pins the Hugging Face
-repositories, revisions, file sizes and SHA-256 for both the MIT-licensed
+repositories, revisions, file sizes and SHA-256 for the MIT-licensed
 [`YOLOW92/yolowocr-v2`](https://huggingface.co/YOLOW92/yolowocr-v2) BF16 suite
-(`V2_DET`, `V2_REC_MULTI`, `V2_REC_LATIN`, `V2_LAYOUT`, `V2_FORMULA`) and upstream
-PP-OCRv6 small/medium, PP-DocLayoutV3 and PP-FormulaNet_plus-L. Download them into
-the cache directory and verify before use.
+(`V2_DET`, `V2_REC_MULTI`, `V2_REC_LATIN`, `V2_LAYOUT`, `V2_FORMULA`),
+[`YOLOW92/yolowocr-v3`](https://huggingface.co/YOLOW92/yolowocr-v3) (`V3_REC_MULTI`,
+`V3_REC_LATIN` used by `Quality::Accurate`, plus mid-schedule preview checkpoints
+`V3_DET`, `V3_LAYOUT`, `V3_FORMULA`), and upstream PP-OCRv6 small/medium,
+PP-DocLayoutV3 and PP-FormulaNet_plus-L. `ModelChoice::models(formulas)` returns
+the exact list of models required for downloading and SHA-256 verification.
 
 Concurrency is document-level: one `extract_with` call processes one document;
 run multiple calls on multiple threads/processes for throughput. The OCR engine

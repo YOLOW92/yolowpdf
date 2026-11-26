@@ -12,9 +12,9 @@ use std::time::{Duration, Instant};
 
 use yolowpdf::{OcrInfo, OcrLine, OcrOutput, PageOcr};
 
-use crate::device::{Device, ModelChoice, Quality, select_models};
+use crate::device::{Device, ModelChoice, ModelSuite, Quality, RecScript, select_models_with};
 use crate::math::Math;
-use crate::models::{FORMULA, LAYOUT, Model, SMALL_REC};
+use crate::models::Model;
 use crate::pipeline::Engine;
 use crate::{Image, Line};
 
@@ -24,16 +24,82 @@ pub type Fetch = Arc<dyn Fn(&Model) -> Result<(), String> + Send + Sync>;
 /// 模型和设备怎么定。
 pub struct PdfOcrConfig {
     pub root: PathBuf,
+    /// 模型套件：默认 [`ModelSuite::Yolow`]（MIT BF16），也可选 [`ModelSuite::Paddle`]。
+    pub suite: ModelSuite,
     pub quality: Quality,
+    /// 文字识别词表范围：默认 [`RecScript::Multi`]，纯英文/拉丁文档可选 [`RecScript::Latin`]。
+    pub script: RecScript,
     pub device: Device,
     /// 调用方明确要了 GPU（`cuda`、`cuda:N`）。`auto` 时本机没有 N 卡不算退回，不报 `gpu_fallback`。
     pub gpu_required: bool,
-    /// 也识别行间公式（多下载 860 MB 模型，每个公式要几秒）。
+    /// 也识别行间公式（自研轻量套约 94 MB，Paddle 上游约 860 MB）。
     pub formulas: bool,
-    /// 没有时缺模型就报错（离线环境，提前用 `yolowpdf models fetch` 下好）。
+    /// 没有时缺模型就报错（离线环境，提前把模型放进 `root`）。
     pub fetch: Option<Fetch>,
     /// 缺模型时放到独立线程下载，这期间识别立刻返回错误（常驻服务）；否则调用者等下载完（命令行、绑定）。
     pub background_download: bool,
+}
+
+impl PdfOcrConfig {
+    /// 以默认策略构造配置：自研 MIT 套件、`Quality::Auto`、多语种、`Device::Cpu`、不启用公式。
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self {
+            root: root.into(),
+            suite: ModelSuite::default(),
+            quality: Quality::default(),
+            script: RecScript::default(),
+            device: Device::Cpu,
+            gpu_required: false,
+            formulas: false,
+            fetch: None,
+            background_download: false,
+        }
+    }
+
+    pub fn suite(mut self, suite: ModelSuite) -> Self {
+        self.suite = suite;
+        self
+    }
+
+    pub fn quality(mut self, quality: Quality) -> Self {
+        self.quality = quality;
+        self
+    }
+
+    pub fn script(mut self, script: RecScript) -> Self {
+        self.script = script;
+        self
+    }
+
+    pub fn device(mut self, device: Device) -> Self {
+        self.device = device;
+        self
+    }
+
+    pub fn gpu_required(mut self, required: bool) -> Self {
+        self.gpu_required = required;
+        self
+    }
+
+    pub fn formulas(mut self, formulas: bool) -> Self {
+        self.formulas = formulas;
+        self
+    }
+
+    pub fn fetch(mut self, fetch: Fetch) -> Self {
+        self.fetch = Some(fetch);
+        self
+    }
+
+    pub fn background_download(mut self, background: bool) -> Self {
+        self.background_download = background;
+        self
+    }
+
+    /// 按当前配置选出的整套模型清单。
+    pub fn selected_models(&self) -> ModelChoice {
+        select_models_with(self.suite, self.quality, self.script, self.device)
+    }
 }
 
 /// [策略] 下载或载入失败后隔这么久再试：网络抖动不该让 OCR 到重启前都不可用，也不该每张图都重试一次
@@ -79,7 +145,8 @@ fn failed(error: String) -> Attempt {
 
 struct Loaded {
     engine: Engine,
-    choice: ModelChoice,
+    engine_name: String,
+    model_name: String,
 }
 
 /// 懒加载的 PDF OCR 引擎。
@@ -108,28 +175,33 @@ impl PdfOcr {
         self.ready.get().map(|l| &l.engine)
     }
 
-    /// 模型目录直接给（测评用）：立刻载入，不走缓存和下载。
+    /// 模型目录直接给（测评或自定义权重用）：立刻载入，不走缓存和下载。
     pub fn from_dirs(
         det_dir: PathBuf,
         rec_dir: PathBuf,
         math_dirs: Option<(PathBuf, PathBuf)>,
         device: Device,
     ) -> Result<Self, String> {
-        let this = Self::new(PdfOcrConfig {
-            root: PathBuf::new(),
-            quality: Quality::Fast,
-            device,
-            gpu_required: false,
-            formulas: false,
-            fetch: None,
-            background_download: false,
-        });
+        let model_name = dir_model_label(&rec_dir);
+        let engine_name = if model_name.to_ascii_lowercase().contains("pp-ocr") {
+            ModelSuite::Paddle.engine_name()
+        } else {
+            ModelSuite::Yolow.engine_name()
+        };
+        let this = Self::new(
+            PdfOcrConfig::new(PathBuf::new())
+                .device(device)
+                .formulas(math_dirs.is_some()),
+        );
         let mut engine = Engine::load_with(&det_dir, &rec_dir, device)?;
         if let Some((layout, formula)) = math_dirs {
             engine = engine.with_math(Math::load(&layout, &formula)?);
         }
-        let choice = select_models(Quality::Fast, device);
-        let _ = this.ready.set(Loaded { engine, choice });
+        let _ = this.ready.set(Loaded {
+            engine,
+            engine_name: engine_name.to_owned(),
+            model_name,
+        });
         Ok(this)
     }
 
@@ -182,13 +254,11 @@ impl PdfOcr {
     fn load_or_download(&self) -> Result<&Loaded, String> {
         let c = &self.config;
         let result = catch_unwind(AssertUnwindSafe(|| {
-            let choice = select_models(c.quality, c.device);
-            let math: &[Model] = if c.formulas { &[LAYOUT, FORMULA] } else { &[] };
-            let missing: Vec<Model> = [&choice.det, &choice.rec]
+            let choice = c.selected_models();
+            let missing: Vec<Model> = choice
+                .models(c.formulas)
                 .into_iter()
-                .chain(math)
                 .filter(|m| !m.present(&c.root))
-                .copied()
                 .collect();
             if !missing.is_empty() {
                 let Some(fetch) = &c.fetch else {
@@ -251,18 +321,45 @@ impl PdfOcr {
         let mut engine =
             Engine::load_with(&choice.det.dir(&c.root), &choice.rec.dir(&c.root), c.device)?;
         if c.formulas {
-            engine = engine.with_math(Math::load(&LAYOUT.dir(&c.root), &FORMULA.dir(&c.root))?);
+            engine = engine.with_math(Math::load(
+                &choice.layout.dir(&c.root),
+                &choice.formula.dir(&c.root),
+            )?);
         }
-        Ok(Loaded { engine, choice })
+        Ok(Loaded {
+            engine,
+            engine_name: choice.engine_name().to_owned(),
+            model_name: choice.rec.repo.to_owned(),
+        })
     }
 }
 
 impl std::fmt::Debug for PdfOcr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PdfOcr")
+            .field("suite", &self.config.suite)
             .field("quality", &self.config.quality)
+            .field("script", &self.config.script)
             .field("device", &self.config.device)
             .finish_non_exhaustive()
+    }
+}
+
+/// 从本地权重目录推导可读模型名（遇到 `…/<model>/best` 时取上一级目录名）。
+fn dir_model_label(dir: &std::path::Path) -> String {
+    let leaf = dir.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    if (leaf == "best" || leaf == "best_bf16")
+        && let Some(parent) = dir
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|s| s.to_str())
+    {
+        return parent.to_owned();
+    }
+    if leaf.is_empty() {
+        dir.display().to_string()
+    } else {
+        leaf.to_owned()
     }
 }
 
@@ -314,9 +411,10 @@ impl PageOcr for PdfOcr {
     }
 
     fn info(&self) -> OcrInfo {
+        let planned = self.config.selected_models();
         let mut info = OcrInfo {
-            engine: ENGINE.into(),
-            model: SMALL_REC.repo.into(),
+            engine: planned.engine_name().into(),
+            model: planned.rec.repo.into(),
             device: "cpu".into(),
             ..Default::default()
         };
@@ -327,7 +425,8 @@ impl PageOcr for PdfOcr {
                 }
             }
             Some(l) => {
-                info.model = l.choice.rec.repo.into();
+                info.engine = l.engine_name.clone();
+                info.model = l.model_name.clone();
                 let status = l.engine.device_status();
                 info.device = device_name(status.actual);
                 // auto 模式在没有 N 卡的机器上用 CPU 是正常情况，不算退回
@@ -340,9 +439,6 @@ impl PageOcr for PdfOcr {
         info
     }
 }
-
-/// [`OcrInfo::engine`]。
-const ENGINE: &str = "pp-ocrv6";
 
 /// `cpu` 或 `cuda:N`。
 fn device_name(d: Device) -> String {
@@ -361,15 +457,14 @@ mod tests {
 
     /// 一个不存在的模型目录：模型都算缺的。
     fn config(fetch: Option<Fetch>, background_download: bool) -> PdfOcrConfig {
-        PdfOcrConfig {
-            root: PathBuf::from("/nonexistent/yolowpdf-ocr-test"),
-            quality: Quality::Fast,
-            device: Device::Cpu,
-            gpu_required: false,
-            formulas: false,
-            fetch,
-            background_download,
+        let mut c = PdfOcrConfig::new("/nonexistent/yolowpdf-ocr-test")
+            .quality(Quality::Fast)
+            .device(Device::Cpu)
+            .background_download(background_download);
+        if let Some(f) = fetch {
+            c = c.fetch(f);
         }
+        c
     }
 
     fn counting(calls: &Arc<AtomicUsize>) -> Fetch {
@@ -465,5 +560,33 @@ mod tests {
             .prepare(Some(Instant::now() + Duration::from_millis(20)))
             .unwrap_err();
         assert!(e.contains("deadline"), "{e}");
+    }
+
+    #[test]
+    fn builder_defaults_to_yolow_and_supports_suite_and_script() {
+        let cfg = PdfOcrConfig::new("/tmp/models")
+            .script(RecScript::Latin)
+            .formulas(true);
+        let choice = cfg.selected_models();
+        assert_eq!(choice.suite, ModelSuite::Yolow);
+        assert_eq!(choice.script, RecScript::Latin);
+        assert_eq!(choice.models(true).len(), 4);
+        assert_eq!(choice.engine_name(), "yolowocr");
+
+        let ocr = PdfOcr::new(cfg);
+        let info = ocr.info();
+        assert_eq!(info.engine, "yolowocr");
+        assert!(info.model.contains("rec_v2_latin"), "{}", info.model);
+
+        assert_eq!(
+            dir_model_label(std::path::Path::new("/exports/v3_bf16/rec_v3_large/best")),
+            "rec_v3_large"
+        );
+        assert_eq!(
+            dir_model_label(std::path::Path::new(
+                "/cache/PP-OCRv6_small_rec_safetensors"
+            )),
+            "PP-OCRv6_small_rec_safetensors"
+        );
     }
 }

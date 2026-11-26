@@ -2,6 +2,23 @@
 
 All notable changes are listed here. The project follows [Semantic Versioning](https://semver.org/).
 
+## 0.2.1
+
+### PDF Core (`yolowpdf`)
+- **`yolow64` `0.4.0`:** Upgraded [`yolow64`](https://crates.io/crates/yolow64) from `0.3.0` to `0.4.0` for runtime-dispatched AVX-512 (VBMI2 / VBMI / BW), AVX2, and NEON SIMD Base64 acceleration in `PdfImage::data_url()`.
+
+### OCR Engine & Open-Source v3 Weights (`yolowpdf-ocr`)
+- **Open-Source `YolowOCR-Suite v3` (MIT BF16) on Hugging Face ([`YOLOW92/yolowocr-v3`](https://huggingface.co/YOLOW92/yolowocr-v3)):**
+  - **Completed & enabled in `Quality::Accurate`:** `rec_v3_large` (44.72 MB, 38.4k steps, LCNetV4-L + 4L SVTR `h=256`, 18,710 vocab) and `rec_v3_latin_large` (35.20 MB, 18.0k steps, 254 vocab), pinned as `V3_REC_MULTI` and `V3_REC_LATIN` with SHA-256 digests in `models.rs`.
+  - **Mid-schedule preview checkpoints (published as-is, not yet in default routing):** `det_v3_large` (44.20 MB, 6.6k/24k), `layout_l_v3` (67.03 MB, 4.3k/24k), and `formula_v3_pro` (255.20 MB, 15.8k/35k) were stopped by the compute budget before finishing their full schedules and are exposed as `V3_DET`, `V3_LAYOUT`, and `V3_FORMULA` for inspection and reproducibility.
+- **Unified Model Routing & Builder API:** Added `ModelSuite::{Yolow, Paddle}` (default `Yolow`), `RecScript::{Multi, Latin}`, unified 4-model `ModelChoice` (`{ det, rec, layout, formula, suite, script, tier }` + `models(formulas)`), `select_models_with(...)`, and a fluent `PdfOcrConfig::new(root)` builder. `PdfOcr::from_dirs(...)` now reports the actual loaded directory/engine label in `OcrInfo`.
+- **Formula LaTeX KaTeX Hardening:** `formula::to_latex` now rewrites `\boldmath` → `\mathbf` and collapses degenerate 3+ consecutive `\qquad`/`\quad`/`\ ` spacing runs.
+
+### Measured (`2026-11-27`, `olmocr-scans` 134 pages / 1,118 tests, `YOLOWPDF_FAST_MATH=1`)
+- **`det_v2 + rec_v3_large` (`Quality::Accurate`, GPU text, 49.5 MB):** `134/134` in `133.7 s`, peak `791.3 MB`, score **`0.3993`** (`no-base 0.0990`, **`old_scans 0.1958`**, **+2.66 pp** over v2 `0.1692`, matching Docling-GPU `0.1977` at 100% completion vs 47.8%).
+- **`det_v2 + rec_v3_latin_large` (`Quality::Accurate` + Latin, GPU text, 40.3 MB):** `134/134` in `138.0 s`, peak `706.9 MB`, score `0.3948` (`no-base 0.0922`, **`old_scans 0.1844`**, **+1.71 pp** over v2 Latin `0.1673`).
+- **Preview check diagnostics:** `formula_v3_pro` cut degenerate formula loops 6.4× (`116/860` → `4/190`, `2.1%`, `mtp_tau=3.94×`); `layout_l_v3` cut plain-text false-positive `$$` boxes 24× (`600` → `25`), though both remain incomplete mid-schedule checkpoints (see `benchmarks/results/2026-11-27/report.md`).
+
 ## 0.2.0
 
 Consolidated release summarizing all changes since `0.1.2` across both `yolowpdf` (PDF core) and `yolowpdf-ocr` (pure-Rust OCR + open-source `YolowOCR-Suite v2` models).

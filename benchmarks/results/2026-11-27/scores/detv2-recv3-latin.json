@@ -1,0 +1,11 @@
+{
+ "tests": 1118,
+ "passed": 231,
+ "categories": {
+  "baseline": 1.0,
+  "old_scans": 0.1844106463878327,
+  "old_scans_math": 0.0
+ },
+ "olmocr": 0.39480354879594426,
+ "nobase": 0.09220532319391635
+}

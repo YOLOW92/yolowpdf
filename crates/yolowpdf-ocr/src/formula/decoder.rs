@@ -310,14 +310,14 @@ impl Decoder {
             let vocab = all_logits.shape[1];
 
             let mut matched_all = true;
-            for j in 1..draft.len() {
+            for (j, &cand) in draft.iter().enumerate().skip(1) {
                 let seq_len = 1 + out.len();
                 let row = &all_logits.data[(j - 1) * vocab..j * vocab];
                 let true_tok = match self.forced_eos {
                     Some(f) if seq_len + 1 == max_len => f,
                     _ => argmax(row),
                 };
-                if true_tok == draft[j] {
+                if true_tok == cand {
                     if true_tok == self.eos {
                         return Ok(out);
                     }

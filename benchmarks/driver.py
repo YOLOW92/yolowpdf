@@ -33,6 +33,7 @@ LIGHT_PY = Path(os.environ.get("YOLOWPDF_LIGHT_PY", Path.home() / "pagesift-benc
 BENCH = Path(os.environ.get("YOLOWPDF_BENCH", ROOT.parent / "yolowpdf-bench"))
 DATA = Path(os.environ.get("YOLOWPDF_DATA", ROOT.parent / "yolowpdf-data"))
 V2_MODELS = Path(os.environ.get("YOLOWPDF_V2_MODELS", ROOT.parent / "yolowpdf-train/exports/v2_bf16"))
+V3_MODELS = Path(os.environ.get("YOLOWPDF_V3_MODELS", ROOT.parent / "yolowpdf-train/exports/v3_bf16"))
 
 
 def py(tool, venv=None, env=None, **kw):
@@ -69,6 +70,21 @@ OCR_LATIN_MATH_ENV = {
     "YOLOWPDF_OCR_LAYOUT": os.environ.get("YOLOWPDF_OCR_LAYOUT", str(V2_MODELS / "layout_s_v2_r2/best")),
     "YOLOWPDF_OCR_FORMULA": os.environ.get("YOLOWPDF_OCR_FORMULA", str(V2_MODELS / "formula_v2_rect_mtp/best")),
 }
+OCR_V3_ENV = {
+    "YOLOWPDF_OCR_DET": os.environ.get("YOLOWPDF_OCR_DET", str(V2_MODELS / "det_v2/best")),
+    "YOLOWPDF_OCR_REC": os.environ.get("YOLOWPDF_OCR_REC", str(V3_MODELS / "rec_v3_large/best")),
+    "PDF_OCR_FORCE": "1",
+}
+OCR_V3_LATIN_ENV = {
+    "YOLOWPDF_OCR_DET": os.environ.get("YOLOWPDF_OCR_DET", str(V2_MODELS / "det_v2/best")),
+    "YOLOWPDF_OCR_REC": str(V3_MODELS / "rec_v3_latin_large/best"),
+    "PDF_OCR_FORCE": "1",
+}
+OCR_V3_MATH_ENV = {
+    **OCR_V3_ENV,
+    "YOLOWPDF_OCR_LAYOUT": os.environ.get("YOLOWPDF_OCR_LAYOUT", str(V3_MODELS / "layout_l_v3/best")),
+    "YOLOWPDF_OCR_FORMULA": os.environ.get("YOLOWPDF_OCR_FORMULA", str(V3_MODELS / "formula_v3_pro/best")),
+}
 OCR_V1_ENV = {
     "YOLOWPDF_OCR_DET": str(Path.home() / ".cache/pagesift/models/PP-OCRv6_small_det_safetensors"),
     "YOLOWPDF_OCR_REC": str(Path.home() / ".cache/pagesift/models/PP-OCRv6_small_rec_safetensors"),
@@ -100,6 +116,10 @@ TOOLS = {
     "yolowpdf-ocr-latin-math": dict(cmd=rust_example("bench_ocr_worker"), env=OCR_LATIN_MATH_ENV, per_worker_mb=1100, startup_s=300),
     "yolowpdf-ocr-latin-gpu": dict(cmd=rust_example("bench_ocr_worker"), env={**OCR_LATIN_ENV, "OCR_DEVICE": "gpu"}, per_worker_mb=900, max_workers=4, startup_s=300),
     "yolowpdf-ocr-latin-math-gpu": dict(cmd=rust_example("bench_ocr_worker"), env={**OCR_LATIN_MATH_ENV, "OCR_DEVICE": "gpu"}, per_worker_mb=1300, max_workers=4, startup_s=420),
+    # OCR (v3 Large/Pro BF16)
+    "yolowpdf-ocr-v3-gpu": dict(cmd=rust_example("bench_ocr_worker"), env={**OCR_V3_ENV, "OCR_DEVICE": "gpu"}, per_worker_mb=1000, max_workers=4, startup_s=300),
+    "yolowpdf-ocr-v3-latin-gpu": dict(cmd=rust_example("bench_ocr_worker"), env={**OCR_V3_LATIN_ENV, "OCR_DEVICE": "gpu"}, per_worker_mb=950, max_workers=4, startup_s=300),
+    "yolowpdf-ocr-v3-math-gpu": dict(cmd=rust_example("bench_ocr_worker"), env={**OCR_V3_MATH_ENV, "OCR_DEVICE": "gpu"}, per_worker_mb=2000, max_workers=4, startup_s=420),
     # OCR (v1 upstream reference)
     "yolowpdf-ocr-v1": dict(cmd=rust_example("bench_ocr_worker"), env=OCR_V1_ENV, per_worker_mb=2800, startup_s=180),
     "yolowpdf-ocr-v1-gpu": dict(cmd=rust_example("bench_ocr_worker"), env={**OCR_V1_ENV, "OCR_DEVICE": "gpu"}, per_worker_mb=3000, max_workers=4, startup_s=300),

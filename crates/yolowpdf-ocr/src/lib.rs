@@ -1,10 +1,12 @@
-//! 扫描页 OCR：PP-OCRv6 的文字检测（DB）和文字识别（SVTR + CTC），纯 Rust，CPU 或 N 卡上跑
-//! （设备见 [`device`]，GPU 不可用时自动退回 CPU 并报告原因）。
-//! 权重是 PaddlePaddle 在 Hugging Face 上发布的 safetensors（Apache-2.0），首次使用时下载
-//! （见 [`models`]），不随本仓库分发。
+//! 扫描页 OCR：纯 Rust 实现的文字检测（DB）、文字识别（SVTR + CTC）、版面检测（DETR）与
+//! 公式识别（ViT + mBART + MTP-4 无损自投机解码），支持 CPU 与 NVIDIA CUDA（设备见 [`device`]，
+//! GPU 不可用时自动退回 CPU 并报告原因）。
+//! 默认选用 MIT 许可的自研 BF16 套件 [`ModelSuite::Yolow`]，也完整兼容上游 Apache-2.0
+//! [`ModelSuite::Paddle`]（PP-OCRv6 / PP-DocLayoutV3 / PP-FormulaNet_plus-L）；权重首次使用时
+//! 下载（清单与 SHA-256 见 [`models`]），不随本仓库分发。
 //!
 //! 流程：整页图 → [`det::Det::detect`] 得到文字行的四边形 → 逐行裁出、拉正 →
-//! [`rec::Rec::recognize`] 得到文字和置信度。
+//! [`rec::Rec::recognize`] 得到文字和置信度；开启公式时由 [`math::Math`] 识别行间公式。
 
 pub mod det;
 pub mod device;
@@ -20,7 +22,10 @@ pub mod pipeline;
 pub mod rec;
 mod script;
 
-pub use device::{Device, DeviceStatus, ModelChoice, Quality, select_models};
+pub use device::{
+    Device, DeviceStatus, ModelChoice, ModelSuite, Quality, RecScript, select_models,
+    select_models_with,
+};
 pub use gpu_run::GpuStats;
 
 /// 一张 8 位图：灰度（1 通道）或 RGB（3 通道），按行存放、无行间填充。
